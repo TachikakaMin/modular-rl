@@ -11,9 +11,14 @@ from shutil import copyfile
 from config import *
 
 
-def makeEnvWrapper(env_name, obs_max_len=None, seed=0):
+def makeEnvWrapper(env_name, xml, max_episode_steps, env_file, obs_max_len=None, seed=0):
     """return wrapped gym environment for parallel sample collection (vectorized environments)"""
     def helper():
+        params = {'xml': os.path.abspath(xml)}
+        register(id=("%s-v0" % env_name),
+                 max_episode_steps=max_episode_steps,
+                 entry_point="environments.%s:ModularEnv" % env_file,
+                 kwargs=params)
         e = gym.make("environments:%s-v0" % env_name)
         e.seed(seed)
         return wrappers.ModularEnvWrapper(e, obs_max_len)
@@ -29,8 +34,10 @@ def findMaxChildren(env_names, graphs):
     return max_children
 
 
-def registerEnvs(env_names, max_episode_steps, custom_xml):
+def registerEnvs(env_names, args):
     """register the MuJoCo envs with Gym and return the per-limb observation size and max action value (for modular policy training)"""
+    max_episode_steps = args.max_episode_steps
+    custom_xml = args.custom_xml
     # get all paths to xmls (handle the case where the given path is a directory containing multiple xml files)
     paths_to_register = []
     # existing envs
@@ -45,6 +52,8 @@ def registerEnvs(env_names, max_episode_steps, custom_xml):
             for name in sorted(os.listdir(custom_xml)):
                 if '.xml' in name:
                     paths_to_register.append(os.path.join(custom_xml, name))
+    
+    envs_train = []
     # register each env
     for xml in paths_to_register:
         env_name = os.path.basename(xml)[:-4]
@@ -59,11 +68,18 @@ def registerEnvs(env_names, max_episode_steps, custom_xml):
                  max_episode_steps=max_episode_steps,
                  entry_point="environments.%s:ModularEnv" % env_file,
                  kwargs=params)
-        env = wrappers.IdentityWrapper(gym.make("environments:%s-v0" % env_name))
+ 
+        env = gym.make("environments:%s-v0" % env_name)
+        env = wrappers.IdentityWrapper(env)
+        
         # the following is the same for each env
         limb_obs_size = env.limb_obs_size
         max_action = env.max_action
-    return limb_obs_size, max_action
+        obs_max_len = max([len(args.graphs[env_name]) for env_name in env_names]) * limb_obs_size
+        envs_train.append(makeEnvWrapper(env_name, xml, max_episode_steps, env_file,  obs_max_len, args.seed))
+
+    return limb_obs_size, max_action, envs_train
+
 
 
 def quat2expmap(q):
@@ -134,6 +150,33 @@ class ReplayBuffer(object):
 
         return (np.array(x), np.array(y), np.array(u),
                     np.array(r).reshape(-1, 1), np.array(d).reshape(-1, 1))
+
+    def sample_seq_len(self, batch_size, seq_len):
+        ind = np.random.randint(0, len(self.storage)-seq_len, size=batch_size)
+        x, y, u, r, d = [], [], [], [], []
+
+        for i in ind:
+            x1, y1, u1, r1, d1 = [], [], [], [], []
+            for j in range(i,i+seq_len):
+                data = self.storage[j]
+                X = data[:self.slicing_size[0]]
+                Y = data[self.slicing_size[0]:self.slicing_size[0] + self.slicing_size[1]]
+                U = data[self.slicing_size[0] + self.slicing_size[1]:self.slicing_size[0] + self.slicing_size[1] + self.slicing_size[2]]
+                R = data[self.slicing_size[0] + self.slicing_size[1] + self.slicing_size[2]:self.slicing_size[0] + self.slicing_size[1] + self.slicing_size[2] + self.slicing_size[3]]
+                D = data[self.slicing_size[0] + self.slicing_size[1] + self.slicing_size[2] + self.slicing_size[3]:]
+                x1.append(np.array(X, copy=False))
+                y1.append(np.array(Y, copy=False))
+                u1.append(np.array(U, copy=False))
+                r1.append(np.array(R, copy=False))
+                d1.append(np.array(D, copy=False))
+            x.append(np.array(x1, copy=False))
+            y.append(np.array(y1, copy=False))
+            u.append(np.array(u1, copy=False))
+            r.append(np.array(r1, copy=False))
+            d.append(np.array(d1, copy=False))
+
+        return (np.array(x), np.array(y), np.array(u),
+                    np.array(r), np.array(d))
 
 
 class MLPBase(nn.Module):

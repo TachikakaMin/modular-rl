@@ -2,10 +2,19 @@ from __future__ import print_function
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from utils import MLPBase
 import torchfold
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+class DisagreeMLP(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(DisagreeMLP, self).__init__()
+        self.base = MLPBase(input_dim, output_dim)
+
+    def forward(self, x):
+        x = self.base(x)
+        return x
 
 class ActorVanilla(nn.Module):
     """a vanilla actor module that outputs a node's action given only its observation (no message between nodes)"""

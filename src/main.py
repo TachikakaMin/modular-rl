@@ -8,9 +8,12 @@ import json
 import time
 from tensorboardX import SummaryWriter
 from arguments import get_args
-from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 import checkpoint as cp
 from config import *
+from dataclasses import dataclass, field
+import torch.nn as nn
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def train(args):
@@ -34,6 +37,7 @@ def train(args):
     if not args.custom_xml:
         for morphology in args.morphologies:
             envs_train_names += [name[:-4] for name in os.listdir(XML_DIR) if '.xml' in name and morphology in name]
+        # envs_train_names = ["hopper_3"]
         for name in envs_train_names:
             args.graphs[name] = utils.getGraphStructure(os.path.join(XML_DIR, '{}.xml'.format(name)))
     # custom envs
@@ -53,11 +57,15 @@ def train(args):
     print("#" * 50 + '\ntraining envs: {}\n'.format(envs_train_names) + "#" * 50)
 
     # Set up training env and policy ================================================
-    args.limb_obs_size, args.max_action = utils.registerEnvs(envs_train_names, args.max_episode_steps, args.custom_xml)
+    args.limb_obs_size, args.max_action, envs_train = utils.registerEnvs(envs_train_names, args)
     max_num_limbs = max([len(args.graphs[env_name]) for env_name in envs_train_names])
+    
+    
+    args.max_num_limbs = max_num_limbs
+
+    
     # create vectorized training env
     obs_max_len = max([len(args.graphs[env_name]) for env_name in envs_train_names]) * args.limb_obs_size
-    envs_train = [utils.makeEnvWrapper(name, obs_max_len, args.seed) for name in envs_train_names]
     envs_train = SubprocVecEnv(envs_train)  # vectorized env
     # set random seeds
     torch.manual_seed(args.seed)
@@ -97,7 +105,10 @@ def train(args):
     collect_done = True
     episode_timesteps_list = [0 for i in range(num_envs_train)]
     done_list = [True for i in range(num_envs_train)]
+    prev_rssmstate_list = [policy.RSSM._init_rssm_state(args.batch_size) for i in range(num_envs_train)]
+    prev_action_list = [torch.zeros(args.batch_size, args.max_num_limbs).to(device) for i in range(num_envs_train)]
 
+        
     # Start training ===========================================================
     while total_timesteps < args.max_timesteps:
 
@@ -140,6 +151,10 @@ def train(args):
             episode_num += num_envs_train
             # create reward buffer to store reward for one sub-env when it is not done
             episode_reward_list_buffer = [0 for i in range(num_envs_train)]
+
+            prev_rssmstate_list = [policy.RSSM._init_rssm_state(1) for i in range(num_envs_train)]
+            prev_action_list = [torch.zeros(1, args.max_num_limbs).to(device) for i in range(num_envs_train)]
+
 
         # start sampling ===========================================================
         # sample action randomly for sometime and then according to the policy

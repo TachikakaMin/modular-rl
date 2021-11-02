@@ -14,7 +14,7 @@ def get_args():
         help='number of timesteps to train')
     parser.add_argument("--expl_noise", default=0.126, type=float,
         help="std of Gaussian exploration noise")
-    parser.add_argument("--batch_size", default=100, type=int,
+    parser.add_argument("--batch_size", default=128, type=int,
         help="batch size for both actor and critic")
     parser.add_argument("--discount", default=0.99, type=float,
         help="discount factor")

@@ -1,0 +1,27 @@
+{
+  "seed": 0,
+  "morphologies": [
+    "hopper"
+  ],
+  "custom_xml": null,
+  "start_timesteps": 1000,
+  "max_timesteps": 20000000.0,
+  "expl_noise": 0.126,
+  "batch_size": 128,
+  "discount": 0.99,
+  "tau": 0.046,
+  "policy_noise": 0.1,
+  "noise_clip": 0.5,
+  "policy_freq": 2,
+  "expID": 9998,
+  "video_length": 10,
+  "msg_dim": 32,
+  "disable_fold": false,
+  "lr": 5e-05,
+  "max_episode_steps": 1000,
+  "save_freq": 500000.0,
+  "td": true,
+  "bu": true,
+  "rb_max": 10000000.0,
+  "max_children": null
+}
