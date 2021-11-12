@@ -11,7 +11,7 @@ import TD3
 from arguments import get_args
 import checkpoint as cp
 from config import *
-
+from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 
 def generate_video(args):
 
@@ -46,11 +46,13 @@ def generate_video(args):
     env_names.sort()
 
     # Set up env and policy ================================================
-    args.limb_obs_size, args.max_action = utils.registerEnvs(env_names, args.max_episode_steps, args.custom_xml)
+    args.limb_obs_size, args.max_action, envs_train = utils.registerEnvs(env_names, args, vis=True)
     # determine the maximum number of children in all the envs
     if args.max_children is None:
         args.max_children = utils.findMaxChildren(env_names, args.graphs)
     # setup agent policy
+    max_num_limbs = max([len(args.graphs[env_name]) for env_name in env_names])
+    args.max_num_limbs = max_num_limbs
     policy = TD3.TD3(args)
 
     try:
@@ -60,11 +62,10 @@ def generate_video(args):
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-
     # visualize ===========================================================
-    for env_name in env_names:
+    for i, env_name in enumerate(env_names):
         # create env
-        env = utils.makeEnvWrapper(env_name, seed=args.seed, obs_max_len=None)()
+        env = envs_train[i]()
         policy.change_morphology(args.graphs[env_name])
 
         # create unique temp frame dir
@@ -93,7 +94,8 @@ def generate_video(args):
                 obs = env.reset()
                 done = False
                 episode_reward = 0
-            action = policy.select_action(np.array(obs))
+            obs = np.array(obs[:args.limb_obs_size * len(args.graphs[env_name])])
+            action = policy.select_action(obs)
             # perform action in the environment
             new_obs, reward, done, _ = env.step(action)
             episode_reward += reward
@@ -101,7 +103,7 @@ def generate_video(args):
             image_data = env.sim.render(VIDEO_RESOLUATION[0], VIDEO_RESOLUATION[1], camera_name="track")
             img = Image.fromarray(image_data, "RGB")
             draw = ImageDraw.Draw(img)
-            font = ImageFont.truetype('./misc/sans-serif.ttf', 24)
+            font = ImageFont.truetype('./src/misc/sans-serif.ttf', 24)
             draw.text((200, 10), "Instant Reward: " + str(reward), (255, 0, 0), font=font)
             draw.text((200, 35), "Episode Reward: " + str(episode_reward), (255, 0, 0), font=font)
             img.save(os.path.join(frame_dir, "frame-%.10d.png" % time_step_counter))
@@ -135,7 +137,7 @@ def printProgressBar(iteration, total, prefix='Video Progress:', suffix='Complet
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
-    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end='\r')
+    print('\r%s %s%% %s' % (prefix, percent, suffix), end='\r')
     # Print New Line on Complete
     if iteration == total:
         print()

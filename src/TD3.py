@@ -1,5 +1,6 @@
 # Implementation of Twin Delayed Deep Deterministic Policy Gradients (TD3)
 from __future__ import print_function
+from enum import EnumMeta
 import torch
 import torch.nn.functional as F
 from ModularActor import ActorGraphPolicy,DisagreeMLP
@@ -63,10 +64,10 @@ class TD3(object):
         output_size = self.args.limb_obs_size*self.args.max_num_limbs
         self.ObsDecoder = DenseModel(input_size, output_size, self.args.obs_decoder).to(device)
 
-        self.args.var_disag = {'layers':3, 'node_size':100, 'dist':'normal', 'activation':nn.ELU}
+        self.args.var_disag = {'layers':2, 'node_size':50, 'dist':'normal', 'activation':nn.ELU}
         input_size = self.args.rssm_info['deter_size']
         output_size = self.args.rssm_embedding_size
-        self.var_networks = [DenseModel(input_size, output_size, self.args.var_disag).to(device) for _ in range(10)]
+        self.var_networks = [DenseModel(input_size, output_size, self.args.var_disag, 0, [(i-5)/100, i/50]).to(device) for i in range(10)]
         
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.critic_target.load_state_dict(self.critic.state_dict())
@@ -87,32 +88,32 @@ class TD3(object):
         state = torch.FloatTensor(state.reshape(1, -1)).to(device)
         with torch.no_grad():
             action = self.actor(state, 'inference').cpu().numpy().flatten()
+
             return action
 
-    def train_single(self, replay_buffer, iterations, batch_size, discount=0.99,
+    def train_single(self, log_var, replay_buffer, iterations, batch_size, discount=0.99,
                 tau=0.005, policy_noise=0.2, noise_clip=0.5, policy_freq=2):
 
         for it in range(iterations):
 
-
-            
-
-            start_time = timer()
+            env_index = log_var["index"]
+            timestep = log_var["total_train_timestep_list"][env_index]
+            log_var["total_train_timestep_list"][env_index] = timestep + 1
+            writer = log_var["writer"]
+            env_name = log_var["env_name"]
             # sample replay buffer
             x, y, u, r, d = replay_buffer.sample_seq_len(batch_size, self.args.seq_len)
             state = torch.FloatTensor(x).to(device)
             next_state = torch.FloatTensor(y).to(device)
             action = torch.FloatTensor(u).to(device)
-            reward = torch.FloatTensor(r).to(device)
+            # reward = torch.FloatTensor(r).to(device)
             done = torch.FloatTensor(1 - d).to(device)
 
 
-
-            model_loss, posterior = self.representation_loss(next_state, action, done)
-            
-            end_time = timer()
-            # print("[time] [place1]: ", end_time - start_time)
-            
+            model_loss, kl_loss, obs_loss, preds_loss, posterior = self.representation_loss(next_state, action, done)
+            writer.add_scalar('{}_kl_loss'.format(env_name), kl_loss.item(), timestep)
+            writer.add_scalar('{}_obs_loss'.format(env_name), obs_loss.item(), timestep)
+            writer.add_scalar('{}_preds_loss'.format(env_name), preds_loss.item(), timestep)
             
             t = RSSMContState(
                     posterior.mean[:,0],
@@ -122,43 +123,40 @@ class TD3(object):
                 )
             batched_posterior = self.RSSM.rssm_detach(t)
             
-            start_time = timer()
             with FreezeParameters(self.world_list):
-                _, disags_reward = self.RSSM.rollout_imagination(
+                _, disags_reward, _ = self.RSSM.rollout_imagination(
                                         self.args.horizon, 
                                         self.actor, 
                                         batched_posterior,
                                         self.var_networks,
                                         self.ObsDecoder
-                                 )
-            end_time = timer()
-            # print("[time] [place2]: ", end_time - start_time)
+                                )
             disags_reward = torch.stack((disags_reward))
             disags_reward = disags_reward.swapaxes(0,1)
             disags_reward = disags_reward.mean(-1)
             disags_reward = disags_reward.unsqueeze(-1)
             disags_reward = torch.cuda.FloatTensor(disags_reward).to(device)
-
+            writer.add_scalar('{}_disags_reward'.format(env_name), disags_reward.mean(0).item(), timestep)
+            
             self.model_optimizer.zero_grad()
             self.var_optimizer.zero_grad()
             model_loss.backward()
             torch.nn.utils.clip_grad_norm_(
                                 get_parameters(self.world_list), 
                                 self.args.grad_clip
-                              )
+                            )
             torch.nn.utils.clip_grad_norm_(
                                 get_parameters(self.var_networks), 
                                 self.args.grad_clip
-                              )
+                            )
             self.model_optimizer.step()
             self.var_optimizer.step()
 
-            start_time = timer()
             x, y, u, r, d = x[:,0], y[:,0], u[:,0], r[:,0], d[:,0]
             state = torch.FloatTensor(x).to(device)
             next_state = torch.FloatTensor(y).to(device)
             action = torch.FloatTensor(u).to(device)
-            # reward = torch.FloatTensor(r).to(device)
+            reward = torch.FloatTensor(r).to(device)
             done = torch.FloatTensor(1 - d).to(device)
 
             # select action according to policy and add clipped noise
@@ -171,7 +169,10 @@ class TD3(object):
                 # Qtarget = reward + discount * min_i(Qi(next_state, pi(next_state)))
                 target_Q1, target_Q2 = self.critic_target(next_state, next_action)
                 target_Q = torch.min(target_Q1, target_Q2)
-                target_Q = disags_reward + (done * discount * target_Q)
+                if not log_var['normal_mode']:
+                    target_Q = disags_reward + (done * discount * target_Q)
+                else :
+                    target_Q = reward + (done * discount * target_Q)
 
             # get current Q estimates
             current_Q1, current_Q2 = self.critic(state, action)
@@ -202,28 +203,38 @@ class TD3(object):
                 for param, target_param in zip(self.actor.parameters(),
                                                self.actor_target.parameters()):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
-            end_time = timer()
-            # print("[time] [place3]: ", end_time - start_time)
 
-    def train(self, replay_buffer_list, iterations_list, batch_size, discount=0.99,
+
+    def train(self, log_var, replay_buffer_list, iterations_list, batch_size, discount=0.99,
               tau=0.005, policy_noise=0.2, noise_clip=0.5, policy_freq=2, graphs=None, envs_train_names=None):
         per_morph_iter = sum(iterations_list) // len(envs_train_names)
-        for env_name in envs_train_names:
+        for i, env_name in enumerate(envs_train_names):
+            log_var["env_name"] = env_name
+            log_var["index"] = i
             replay_buffer = replay_buffer_list[env_name]
             self.change_morphology(graphs[env_name])
-            self.train_single(replay_buffer, per_morph_iter, batch_size=batch_size, discount=discount,
+            self.train_single(log_var, replay_buffer, per_morph_iter, batch_size=batch_size, discount=discount,
                 tau=tau, policy_noise=policy_noise, noise_clip=noise_clip, policy_freq=policy_freq)
 
     def save(self, fname):
         torch.save(self.RSSM.state_dict(), '%s_RSSM.pth' % fname)
         torch.save(self.actor.state_dict(), '%s_actor.pth' % fname)
         torch.save(self.critic.state_dict(), '%s_critic.pth' % fname)
+        torch.save(self.ObsEncoder.state_dict(), '%s_ObsEncoder.pth' % fname)
+        torch.save(self.ObsDecoder.state_dict(), '%s_ObsDecoder.pth' % fname)
+        for i,var_network in enumerate(self.var_networks):
+            torch.save(var_network.state_dict(), '%s_var_network_%s.pth' % (fname, str(i)))
+
 
     def load(self, fname):
         self.RSSM.load_state_dict(torch.load('%s_RSSM.pth' % fname))
         self.actor.load_state_dict(torch.load('%s_actor.pth' % fname))
         self.critic.load_state_dict(torch.load('%s_critic.pth' % fname))
-
+        self.ObsEncoder.load_state_dict(torch.load('%s_ObsEncoder.pth' % fname))
+        self.ObsDecoder.load_state_dict(torch.load('%s_ObsDecoder.pth' % fname))
+        for i,_ in enumerate(self.var_networks):
+            self.var_networks[i].load_state_dict(torch.load('%s_var_network_%s.pth' % (fname, str(i))))
+        
     def representation_loss(self, obs, action, done):
         input_size = self.args.limb_obs_size*self.args.max_num_limbs
         obs_x = torch.zeros(obs.shape[0], obs.shape[1], input_size)
@@ -242,7 +253,7 @@ class TD3(object):
         _, _, kl_loss = self._kl_loss(prior, posterior)
 
         model_loss = kl_loss + obs_loss + preds_loss
-        return model_loss, posterior
+        return model_loss, kl_loss, obs_loss, preds_loss, posterior
     
     def _pred_loss(self, pred_disag, embed):
         pred_disag = pred_disag.swapaxes(0,2)

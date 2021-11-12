@@ -76,18 +76,20 @@ class RSSM(nn.Module, RSSMUtils):
     def rollout_imagination(self, horizon:int, actor:nn.Module, prev_rssm_state, var_networks, ObsDecoder):
         rssm_state = prev_rssm_state
         next_rssm_states = []
-        disags = []
+        rssm_reward = []
+        action_rssm = []
         for t in range(horizon):
             state = (self.get_model_state(rssm_state)).detach()
             obs_decode = ObsDecoder(state)
             tot_num = obs_decode.shape[1]//self.action_size*actor.num_limbs
             action = actor(obs_decode[:,:tot_num])
             rssm_state, disag, _ = self.rssm_imagine(action, rssm_state, True, var_networks)
-            disags.append(disag*self.reward_discont)
+            rssm_reward.append(disag)
+            action_rssm.append(action_rssm)
             next_rssm_states.append(rssm_state)
             
         next_rssm_states = self.rssm_stack_states(next_rssm_states, dim=0)
-        return next_rssm_states, disags
+        return next_rssm_states, rssm_reward, action_rssm
 
     def rssm_observe(self, obs_embed, prev_action, prev_nonterm, prev_rssm_state, var_networks):
         prior_rssm_state, _, preds_disag = self.rssm_imagine(prev_action, prev_rssm_state, prev_nonterm, var_networks)

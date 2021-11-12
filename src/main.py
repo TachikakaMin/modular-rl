@@ -76,10 +76,14 @@ def train(args):
     # setup agent policy
     policy = TD3.TD3(args)
 
+
+    load_exp_name = "EXP_%04d" % (args.loadID)
+    load_exp_path = os.path.join(DATA_DIR, load_exp_name)
+    load_rb_path = os.path.join(BUFFER_DIR, load_exp_name)
     # Create new training instance or load previous checkpoint ========================
-    if cp.has_checkpoint(exp_path, rb_path):
-        print("*** loading checkpoint from {} ***".format(exp_path))
-        total_timesteps, episode_num, replay_buffer, num_samples, loaded_path = cp.load_checkpoint(exp_path, rb_path, policy, args)
+    if cp.has_checkpoint(load_exp_path, load_rb_path):
+        print("*** loading checkpoint from {} ***".format(load_exp_path))
+        total_timesteps, total_train_timestep_list, episode_num, replay_buffer, num_samples, loaded_path = cp.load_checkpoint(load_exp_path, load_rb_path, policy, args)
         print("*** checkpoint loaded from {} ***".format(loaded_path))
     else:
         print("*** training from scratch ***")
@@ -95,6 +99,7 @@ def train(args):
         else:
             for name in envs_train_names:
                 replay_buffer[name] = utils.ReplayBuffer()
+        total_train_timestep_list = [0 for i in range(num_envs_train)]
 
     # Initialize training variables ================================================
     writer = SummaryWriter("%s/%s/" % (DATA_DIR, exp_name))
@@ -105,18 +110,18 @@ def train(args):
     collect_done = True
     episode_timesteps_list = [0 for i in range(num_envs_train)]
     done_list = [True for i in range(num_envs_train)]
-    prev_rssmstate_list = [policy.RSSM._init_rssm_state(args.batch_size) for i in range(num_envs_train)]
-    prev_action_list = [torch.zeros(args.batch_size, args.max_num_limbs).to(device) for i in range(num_envs_train)]
-
-        
     # Start training ===========================================================
     while total_timesteps < args.max_timesteps:
-
         # train and log after one episode for each env
         if collect_done:
             # log updates and train policy
             if this_training_timesteps != 0:
-                policy.train(replay_buffer, episode_timesteps_list, args.batch_size,
+                normal_mode = 0
+                if total_timesteps > args.start_normal_timesteps:
+                    normal_mode = 1
+                log_var = {"writer": writer, "total_train_timestep_list": total_train_timestep_list, "normal_mode":normal_mode}
+
+                policy.train(log_var, replay_buffer, episode_timesteps_list, args.batch_size,
                             args.discount, args.tau, args.policy_noise, args.noise_clip,
                             args.policy_freq, graphs=args.graphs, envs_train_names=envs_train_names[:num_envs_train])
                 # add to tensorboard display
@@ -136,7 +141,7 @@ def train(args):
             # save model and replay buffers
             if timesteps_since_saving >= args.save_freq:
                 timesteps_since_saving = 0
-                model_saved_path = cp.save_model(exp_path, policy, total_timesteps,
+                model_saved_path = cp.save_model(exp_path, policy, total_timesteps, total_train_timestep_list,
                                                  episode_num, num_samples, replay_buffer,
                                                  envs_train_names, args)
                 print("*** model saved to {} ***".format(model_saved_path))
@@ -151,10 +156,7 @@ def train(args):
             episode_num += num_envs_train
             # create reward buffer to store reward for one sub-env when it is not done
             episode_reward_list_buffer = [0 for i in range(num_envs_train)]
-
-            prev_rssmstate_list = [policy.RSSM._init_rssm_state(1) for i in range(num_envs_train)]
-            prev_action_list = [torch.zeros(1, args.max_num_limbs).to(device) for i in range(num_envs_train)]
-
+      
 
         # start sampling ===========================================================
         # sample action randomly for sometime and then according to the policy
@@ -216,7 +218,7 @@ def train(args):
         collect_done = all(done_list)
 
     # save checkpoint after training ===========================================================
-    model_saved_path = cp.save_model(exp_path, policy, total_timesteps,
+    model_saved_path = cp.save_model(exp_path, policy, total_timesteps, total_train_timestep_list, 
                                      episode_num, num_samples, replay_buffer,
                                      envs_train_names, args)
     print("*** training finished and model saved to {} ***".format(model_saved_path))

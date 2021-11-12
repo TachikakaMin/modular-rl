@@ -16,7 +16,7 @@ def has_checkpoint(checkpoint_path, rb_path):
     return True
 
 
-def save_model(checkpoint_path, policy, total_timesteps, episode_num, num_samples, replay_buffer, env_names, args):
+def save_model(checkpoint_path, policy, total_timesteps, total_train_timestep_list, episode_num, num_samples, replay_buffer, env_names, args):
     # change to default graph before saving
     policy.change_morphology([-1])
     # Record the state
@@ -27,10 +27,15 @@ def save_model(checkpoint_path, policy, total_timesteps, episode_num, num_sample
         'critic_target_state': policy.critic_target.state_dict(),
         'actor_optimizer_state': policy.actor_optimizer.state_dict(),
         'critic_optimizer_state': policy.critic_optimizer.state_dict(),
+        "RSSM" : policy.RSSM.state_dict(),
+        "ObsEncoder" : policy.ObsEncoder.state_dict(),
+        "ObsDecoder" : policy.ObsDecoder.state_dict(),
+        "var_networks" : {str(i) : policy.var_networks[i].state_dict() for i in range(len(policy.var_networks)) },
         'total_timesteps': total_timesteps,
+        'total_train_timestep_list': total_train_timestep_list,
         'episode_num': episode_num,
         'num_samples': num_samples,
-        'args': args,
+        'args': policy.args,
         'rb_max': {name: replay_buffer[name].max_size for name in replay_buffer},
         'rb_ptr': {name: replay_buffer[name].ptr for name in replay_buffer},
         'rb_slicing_size': {name: replay_buffer[name].slicing_size for name in replay_buffer}
@@ -60,6 +65,13 @@ def load_checkpoint(checkpoint_path, rb_path, policy, args):
     policy.critic_target.load_state_dict(checkpoint['critic_target_state'])
     policy.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state'])
     policy.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state'])
+    policy.RSSM.load_state_dict(checkpoint['RSSM'])
+    policy.ObsEncoder.load_state_dict(checkpoint['ObsEncoder'])
+    policy.ObsDecoder.load_state_dict(checkpoint['ObsDecoder'])
+    policy.args = checkpoint['args']
+    for i in range(len(policy.var_networks)):
+        policy.var_networks[i].load_state_dict(checkpoint["var_networks"][str(i)])
+        
     # load replay buffer
     all_rb_files = [f[:-4] for f in os.listdir(rb_path) if '.npy' in f]
     all_rb_files.sort()
@@ -75,6 +87,7 @@ def load_checkpoint(checkpoint_path, rb_path, policy, args):
         replay_buffer_new[name].storage = list(np.load(os.path.join(rb_path, '{}.npy'.format(name))))
 
     return checkpoint['total_timesteps'], \
+            checkpoint['total_train_timestep_list'], \
             checkpoint['episode_num'], \
             replay_buffer_new, \
             checkpoint['num_samples'], \
@@ -96,3 +109,9 @@ def load_model_only(exp_path, policy):
     policy.critic_target.load_state_dict(checkpoint['critic_target_state'])
     policy.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state'])
     policy.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state'])
+    policy.RSSM.load_state_dict(checkpoint['RSSM'])
+    policy.ObsEncoder.load_state_dict(checkpoint['ObsEncoder'])
+    policy.ObsDecoder.load_state_dict(checkpoint['ObsDecoder'])
+    policy.args = checkpoint['args']
+    for i in range(len(policy.var_networks)):
+        policy.var_networks[i].load_state_dict(checkpoint["var_networks"][str(i)])
