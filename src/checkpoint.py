@@ -16,26 +16,43 @@ def has_checkpoint(checkpoint_path, rb_path):
     return True
 
 
-def save_model(checkpoint_path, policy, total_timesteps, total_train_timestep_list, episode_num, num_samples, replay_buffer, env_names, args):
+def save_model(checkpoint_path, real_policy, expl_policy, wm, total_timesteps, total_train_timestep_list, episode_num, num_samples, replay_buffer, env_names, args):
     # change to default graph before saving
-    policy.change_morphology([-1])
+    real_policy.change_morphology([-1])
+    expl_policy.change_morphology([-1])
     # Record the state
     checkpoint = {
-        'actor_state': policy.actor.state_dict(),
-        'critic_state': policy.critic.state_dict(),
-        'actor_target_state': policy.actor_target.state_dict(),
-        'critic_target_state': policy.critic_target.state_dict(),
-        'actor_optimizer_state': policy.actor_optimizer.state_dict(),
-        'critic_optimizer_state': policy.critic_optimizer.state_dict(),
-        "RSSM" : policy.RSSM.state_dict(),
-        "ObsEncoder" : policy.ObsEncoder.state_dict(),
-        "ObsDecoder" : policy.ObsDecoder.state_dict(),
-        "var_networks" : {str(i) : policy.var_networks[i].state_dict() for i in range(len(policy.var_networks)) },
+        'actor_state': real_policy.actor.state_dict(),
+        'critic_state': real_policy.critic.state_dict(),
+        'actor_target_state': real_policy.actor_target.state_dict(),
+        'critic_target_state': real_policy.critic_target.state_dict(),
+        'actor_optimizer_state': real_policy.actor_optimizer.state_dict(),
+        'critic_optimizer_state': real_policy.critic_optimizer.state_dict(),
+        
+        'expl_actor_state': expl_policy.actor.state_dict(),
+        'expl_critic_state': expl_policy.critic.state_dict(),
+        'expl_actor_target_state': expl_policy.actor_target.state_dict(),
+        'expl_critic_target_state': expl_policy.critic_target.state_dict(),
+        'expl_actor_optimizer_state': expl_policy.actor_optimizer.state_dict(),
+        'expl_critic_optimizer_state': expl_policy.critic_optimizer.state_dict(),
+        
+        'wm_rnn': wm.rnn.state_dict(),
+        'wm_rnn_opt': wm.rnn_opt.state_dict(),
+        'wm_ObsEncoder': wm.ObsEncoder.state_dict(),
+        'wm_ObsDecoder': wm.ObsDecoder.state_dict(),
+        'wm_ED_opt': wm.ED_opt.state_dict(),
+        'wm_rssm_forward_reward_head': wm.rssm_forward_reward_head.state_dict(),
+        'wm_reward_opt': wm.reward_opt.state_dict(),
+        "wm_var_networks" : {i : wm.var_networks[i].state_dict() for i in range(len(wm.var_networks)) },
+        'wm_var_opts': {i : wm.var_opts[i].state_dict() for i in range(len(wm.var_opts)) },
+        
         'total_timesteps': total_timesteps,
         'total_train_timestep_list': total_train_timestep_list,
         'episode_num': episode_num,
         'num_samples': num_samples,
-        'args': policy.args,
+        'args': real_policy.args,
+        'expl_args': expl_policy.args,
+        'wm_args': wm.args,
         'rb_max': {name: replay_buffer[name].max_size for name in replay_buffer},
         'rb_ptr': {name: replay_buffer[name].ptr for name in replay_buffer},
         'rb_slicing_size': {name: replay_buffer[name].slicing_size for name in replay_buffer}
@@ -53,25 +70,43 @@ def save_replay_buffer(rb_path, replay_buffer):
     return rb_path
 
 
-def load_checkpoint(checkpoint_path, rb_path, policy, args):
-    fpath = os.path.join(checkpoint_path, 'model.pyth')
+def load_checkpoint(load_exp_path, rb_path, real_policy, expl_policy, wm, args):
+    fpath = os.path.join(load_exp_path, 'model.pyth')
     checkpoint = torch.load(fpath, map_location='cpu')
     # change to default graph before loading
-    policy.change_morphology([-1])
+    real_policy.change_morphology([-1])
     # load and return checkpoint
-    policy.actor.load_state_dict(checkpoint['actor_state'])
-    policy.critic.load_state_dict(checkpoint['critic_state'])
-    policy.actor_target.load_state_dict(checkpoint['actor_target_state'])
-    policy.critic_target.load_state_dict(checkpoint['critic_target_state'])
-    policy.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state'])
-    policy.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state'])
-    policy.RSSM.load_state_dict(checkpoint['RSSM'])
-    policy.ObsEncoder.load_state_dict(checkpoint['ObsEncoder'])
-    policy.ObsDecoder.load_state_dict(checkpoint['ObsDecoder'])
-    policy.args = checkpoint['args']
-    for i in range(len(policy.var_networks)):
-        policy.var_networks[i].load_state_dict(checkpoint["var_networks"][str(i)])
-        
+    real_policy.actor.load_state_dict(checkpoint['actor_state'])
+    real_policy.critic.load_state_dict(checkpoint['critic_state'])
+    real_policy.actor_target.load_state_dict(checkpoint['actor_target_state'])
+    real_policy.critic_target.load_state_dict(checkpoint['critic_target_state'])
+    real_policy.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state'])
+    real_policy.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state'])
+    real_policy.args = checkpoint['args']
+    
+    if 'expl_actor_state' in checkpoint.keys():
+        print("load expl and world model")
+        expl_policy.change_morphology([-1])
+        expl_policy.actor.load_state_dict(checkpoint['expl_actor_state'])
+        expl_policy.critic.load_state_dict(checkpoint['expl_critic_state'])
+        expl_policy.actor_target.load_state_dict(checkpoint['expl_actor_target_state'])
+        expl_policy.critic_target.load_state_dict(checkpoint['expl_critic_target_state'])
+        expl_policy.actor_optimizer.load_state_dict(checkpoint['expl_actor_optimizer_state'])
+        expl_policy.critic_optimizer.load_state_dict(checkpoint['expl_critic_optimizer_state'])
+        expl_policy.args = checkpoint['expl_args']
+
+        wm.rnn.load_state_dict(checkpoint['wm_rnn'])
+        wm.rnn_opt.load_state_dict(checkpoint['wm_rnn_opt'])
+        wm.ObsEncoder.load_state_dict(checkpoint['wm_ObsEncoder'])
+        wm.ObsDecoder.load_state_dict(checkpoint['wm_ObsDecoder'])
+        wm.ED_opt.load_state_dict(checkpoint['wm_ED_opt'])
+        wm.rssm_forward_reward_head.load_state_dict(checkpoint['wm_rssm_forward_reward_head'])
+        wm.reward_opt.load_state_dict(checkpoint['wm_reward_opt'])
+        for i in range(10):
+            wm.var_networks[i].load_state_dict(checkpoint['wm_var_networks'][i])
+            wm.var_opts[i].load_state_dict(checkpoint['wm_var_opts'][i])
+        wm.args = checkpoint['wm_args']
+
     # load replay buffer
     all_rb_files = [f[:-4] for f in os.listdir(rb_path) if '.npy' in f]
     all_rb_files.sort()
@@ -94,24 +129,31 @@ def load_checkpoint(checkpoint_path, rb_path, policy, args):
             fpath
 
 
-def load_model_only(exp_path, policy):
+def load_model_only(exp_path, real_policy ,expl_policy, vis=False):
     model_path = os.path.join(exp_path, 'model.pyth')
     if not os.path.exists(model_path):
         raise FileNotFoundError('no model file found')
     print('*** using model {} ***'.format(model_path))
     checkpoint = torch.load(model_path, map_location='cpu')
     # change to default graph before loading
-    policy.change_morphology([-1])
+    real_policy.change_morphology([-1])
     # load and return checkpoint
-    policy.actor.load_state_dict(checkpoint['actor_state'])
-    policy.critic.load_state_dict(checkpoint['critic_state'])
-    policy.actor_target.load_state_dict(checkpoint['actor_target_state'])
-    policy.critic_target.load_state_dict(checkpoint['critic_target_state'])
-    policy.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state'])
-    policy.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state'])
-    policy.RSSM.load_state_dict(checkpoint['RSSM'])
-    policy.ObsEncoder.load_state_dict(checkpoint['ObsEncoder'])
-    policy.ObsDecoder.load_state_dict(checkpoint['ObsDecoder'])
-    policy.args = checkpoint['args']
-    for i in range(len(policy.var_networks)):
-        policy.var_networks[i].load_state_dict(checkpoint["var_networks"][str(i)])
+    real_policy.actor.load_state_dict(checkpoint['actor_state'])
+    real_policy.critic.load_state_dict(checkpoint['critic_state'])
+    real_policy.actor_target.load_state_dict(checkpoint['actor_target_state'])
+    real_policy.critic_target.load_state_dict(checkpoint['critic_target_state'])
+    real_policy.actor_optimizer.load_state_dict(checkpoint['actor_optimizer_state'])
+    real_policy.critic_optimizer.load_state_dict(checkpoint['critic_optimizer_state'])
+    real_policy.args = checkpoint['args']
+
+
+    if 'expl_actor_state' in checkpoint.keys():
+        print("load expl model")
+        expl_policy.change_morphology([-1])
+        expl_policy.actor.load_state_dict(checkpoint['expl_actor_state'])
+        expl_policy.critic.load_state_dict(checkpoint['expl_critic_state'])
+        expl_policy.actor_target.load_state_dict(checkpoint['expl_actor_target_state'])
+        expl_policy.critic_target.load_state_dict(checkpoint['expl_critic_target_state'])
+        expl_policy.actor_optimizer.load_state_dict(checkpoint['expl_actor_optimizer_state'])
+        expl_policy.critic_optimizer.load_state_dict(checkpoint['expl_critic_optimizer_state'])
+        expl_policy.args = checkpoint['expl_args']

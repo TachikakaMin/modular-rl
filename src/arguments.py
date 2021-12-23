@@ -30,12 +30,14 @@ def get_args():
         help="frequency of delayed policy updates")
     parser.add_argument("--expID", default=0, type=int)
     parser.add_argument("--loadID", default=0, type=int)
-    parser.add_argument('--video_length', default=4, type=int,
+    parser.add_argument('--video_length', default=5, type=int,
         help='length of video to generate (in seconds)')
     parser.add_argument('--msg_dim', default=32,
         help='message dimension when trained modularly with message passing')
     parser.add_argument('--disable_fold', action="store_true",
         help='disable the use of pytorch fold (used for accelerating training)')
+    parser.add_argument('--only_load_model', action="store_true",
+        help='choose if only load model')
     parser.add_argument('--lr', default=0.0005, type=float,
         help='learning rate for Adam')
     parser.add_argument("--max_episode_steps", type=int, default=1000,
@@ -46,8 +48,10 @@ def get_args():
         help="enable top down message passing")
     parser.add_argument("--bu", action="store_true",
         help="enable bottom up message passing")
-    parser.add_argument("--rb_max", type=int, default=10e6,
+    parser.add_argument("--rb_max", type=int, default=1e8,
         help="maximum replay buffer size across all morphologies")
+    parser.add_argument("--test_real_freq", type=int, default=1e3)
+    parser.add_argument("--start_fewshot", type=int, default=1e6)
     parser.add_argument("--max_children", type=int, default=None,
         help="maximum number of children allowed at each node (optional; facilitate model loading if max_children is different at training time)")
     args = parser.parse_args()

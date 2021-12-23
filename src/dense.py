@@ -46,3 +46,4 @@ class DenseModel(nn.Module):
     def forward(self, input):
         dist_inputs = self.model(input)
         return dist_inputs
+        # return td.independent.Independent(td.Normal(dist_inputs, 1), 1)

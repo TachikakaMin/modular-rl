@@ -63,15 +63,19 @@ class RSSM(nn.Module, RSSMUtils):
         state_action_embed = self.fc_embed_state_action(
                 torch.cat([prev_rssm_state.stoch*nonterms, prev_action_x],dim=-1)
             )
-        preds_disag = [head(state_action_embed) for head in var_networks]
-        preds_disag = torch.stack(preds_disag)
-        disag = preds_disag.std(0).mean(-1)
+
+        preds_disag_dists = [head(state_action_embed) for head in var_networks]
+        preds_disag_dists = torch.stack(preds_disag_dists)
+        disag = preds_disag_dists.std(0).mean(-1)
+
+
         deter_state = self.rnn(state_action_embed, prev_rssm_state.deter*nonterms)
+        
         prior_mean, prior_std = torch.chunk(self.fc_prior(deter_state), 2, dim=-1)
         stats = {'mean':prior_mean, 'std':prior_std}
         prior_stoch_state, std = self.get_stoch_state(stats)
         prior_rssm_state = RSSMContState(prior_mean, std, prior_stoch_state, deter_state)
-        return prior_rssm_state, disag, preds_disag
+        return prior_rssm_state, disag, preds_disag_dists
 
     def rollout_imagination(self, horizon:int, actor:nn.Module, prev_rssm_state, var_networks, ObsDecoder):
         rssm_state = prev_rssm_state
@@ -84,9 +88,9 @@ class RSSM(nn.Module, RSSMUtils):
             tot_num = obs_decode.shape[1]//self.action_size*actor.num_limbs
             action = actor(obs_decode[:,:tot_num])
             rssm_state, disag, _ = self.rssm_imagine(action, rssm_state, True, var_networks)
-            rssm_reward.append(disag)
-            action_rssm.append(action_rssm)
             next_rssm_states.append(rssm_state)
+            rssm_reward.append(disag)
+            action_rssm.append(action)
             
         next_rssm_states = self.rssm_stack_states(next_rssm_states, dim=0)
         return next_rssm_states, rssm_reward, action_rssm
@@ -110,16 +114,16 @@ class RSSM(nn.Module, RSSMUtils):
                             var_networks: list):
         priors = []
         posteriors = []
-        preds_disags = []
+        preds_disag_dists = []
         for t in range(seq_len-1):
             prev_action = action[:,t]*nonterms[:,t]
-            prior_rssm_state, posterior_rssm_state, preds_disag = self.rssm_observe(obs_embed[:,t], prev_action, nonterms[:,t], prev_rssm_state, var_networks)
+            prior_rssm_state, posterior_rssm_state, preds_disag_dist = self.rssm_observe(obs_embed[:,t], prev_action, nonterms[:,t], prev_rssm_state, var_networks)
             priors.append(prior_rssm_state)
             posteriors.append(posterior_rssm_state)
-            preds_disags.append(preds_disag)
+            preds_disag_dists.append(preds_disag_dist)
             prev_rssm_state = posterior_rssm_state
         prior = self.rssm_stack_states(priors, dim=1)
         post = self.rssm_stack_states(posteriors, dim=1)
-        preds_disags = torch.stack(preds_disags)
-        return prior, post, preds_disags
+        preds_disag_dists = torch.stack(preds_disag_dists)
+        return prior, post, preds_disag_dists
         

@@ -53,10 +53,14 @@ def generate_video(args):
     # setup agent policy
     max_num_limbs = max([len(args.graphs[env_name]) for env_name in env_names])
     args.max_num_limbs = max_num_limbs
-    policy = TD3.TD3(args)
+
+    args.isExpl = True
+    expl_policy = TD3.TD3(args)
+    args.isExpl = False
+    real_policy = TD3.TD3(args)
 
     try:
-        cp.load_model_only(exp_path, policy)
+        cp.load_model_only(exp_path, real_policy, expl_policy, True)
     except:
         raise Exception('policy loading failed; check policy params (hint 1: max_children must be the same as the trained policy; hint 2: did the trained policy use torchfold (consider pass --disable_fold)?')
 
@@ -66,7 +70,7 @@ def generate_video(args):
     for i, env_name in enumerate(env_names):
         # create env
         env = envs_train[i]()
-        policy.change_morphology(args.graphs[env_name])
+        real_policy.change_morphology(args.graphs[env_name])
 
         # create unique temp frame dir
         count = 0
@@ -95,7 +99,65 @@ def generate_video(args):
                 done = False
                 episode_reward = 0
             obs = np.array(obs[:args.limb_obs_size * len(args.graphs[env_name])])
-            action = policy.select_action(obs)
+            action = real_policy.select_action(obs)
+            # perform action in the environment
+            new_obs, reward, done, _ = env.step(action)
+            episode_reward += reward
+            # draw image of current frame
+            image_data = env.sim.render(VIDEO_RESOLUATION[0], VIDEO_RESOLUATION[1], camera_name="track")
+            img = Image.fromarray(image_data, "RGB")
+            draw = ImageDraw.Draw(img)
+            font = ImageFont.truetype('./src/misc/sans-serif.ttf', 24)
+            draw.text((200, 10), "Instant Reward: " + str(reward), (255, 0, 0), font=font)
+            draw.text((200, 35), "Episode Reward: " + str(episode_reward), (255, 0, 0), font=font)
+            img.save(os.path.join(frame_dir, "frame-%.10d.png" % time_step_counter))
+
+            obs = new_obs
+            time_step_counter += 1
+
+        # redirect output so output does not show on window
+        FNULL = open(os.devnull, 'w')
+        # create video
+        subprocess.call(['ffmpeg', '-framerate', '50', '-y', '-i', os.path.join(frame_dir, 'frame-%010d.png'),
+                         '-r', '30', '-pix_fmt', 'yuv420p', os.path.join(VIDEO_DIR, '{}.mp4'.format(video_name))],
+                         stdout=FNULL, stderr=subprocess.STDOUT)
+        subprocess.call(['rm', '-rf', frame_dir])
+    
+
+
+    for i, env_name in enumerate(env_names):
+        # create env
+        env = envs_train[i]()
+        expl_policy.change_morphology(args.graphs[env_name])
+
+        # create unique temp frame dir
+        count = 0
+        frame_dir = os.path.join(VIDEO_DIR, "frames_{}_{}_{}".format(args.expID, env_name, count))
+        while os.path.exists(frame_dir):
+            count += 1
+            frame_dir = "{}/frames_{}_{}_{}".format(VIDEO_DIR, args.expID, env_name, count)
+        os.makedirs(frame_dir)
+        # create video name without overwriting previously generated videos
+        count = 0
+        video_name = "%04d_%s_expl_%d" % (args.expID, env_name, count)
+        while os.path.exists("{}/{}.mp4".format(VIDEO_DIR, video_name)):
+            count += 1
+            video_name = "%04d_%s_expl_%d" % (args.expID, env_name, count)
+
+        # init env vars
+        done = True
+        print("-" * 50)
+        time_step_counter = 0
+        printProgressBar(0, total_time)
+
+        while time_step_counter < total_time:
+            printProgressBar(time_step_counter + 1, total_time, prefix=env_name)
+            if done:
+                obs = env.reset()
+                done = False
+                episode_reward = 0
+            obs = np.array(obs[:args.limb_obs_size * len(args.graphs[env_name])])
+            action = expl_policy.select_action(obs)
             # perform action in the environment
             new_obs, reward, done, _ = env.step(action)
             episode_reward += reward

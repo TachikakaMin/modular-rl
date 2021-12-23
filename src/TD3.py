@@ -20,6 +20,7 @@ class TD3(object):
     def __init__(self, args):
 
         self.args = args
+        self.isExpl = args.isExpl
         self.actor = ActorGraphPolicy(self.args.limb_obs_size, 1,
                                       self.args.msg_dim, self.args.batch_size,
                                       self.args.max_action, self.args.max_children,
@@ -36,47 +37,15 @@ class TD3(object):
                                                self.args.msg_dim, self.args.batch_size,
                                                self.args.max_children, self.args.disable_fold,
                                                self.args.td, self.args.bu).to(device)
-        self.args.seq_len = 10
-        self.args.horizon = 10
-        self.args.grad_clip = 100.0
-        self.args.rssm_type = 'continuous'
-        self.args.kl_info = {'use_kl_balance':True, 'kl_balance_scale':0.8, 'use_free_nats':False, 'free_nats':0.0}
-        self.args.loss_scale = {'kl':1, 'discount':10.0}
-        
-
-        self.args.rssm_info = {'deter_size':100, 'stoch_size':256, 'class_size':16, 'category_size':16, 'min_std':0.1} 
-        self.args.rssm_node_size = 100
-        self.args.rssm_embedding_size = 100
-        # deter_size: rnn size
-        self.RSSM = RSSM(self.args.max_num_limbs, self.args.rssm_node_size, 
-                        self.args.rssm_embedding_size, device, 
-                        self.args.rssm_type, self.args.rssm_info).to(device)
-
-
-        self.args.obs_encoder = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
-        input_size = self.args.limb_obs_size*self.args.max_num_limbs
-        output_size = self.args.rssm_embedding_size
-        self.ObsEncoder = DenseModel(input_size, output_size,  self.args.obs_encoder).to(device)
-
-        self.args.obs_decoder = {'layers':3, 'node_size':100, 'dist':'normal', 'activation':nn.ELU}
-        modelstate_size = self.args.rssm_info['stoch_size'] + self.args.rssm_info['deter_size'] 
-        input_size = modelstate_size
-        output_size = self.args.limb_obs_size*self.args.max_num_limbs
-        self.ObsDecoder = DenseModel(input_size, output_size, self.args.obs_decoder).to(device)
-
-        self.args.var_disag = {'layers':2, 'node_size':50, 'dist':'normal', 'activation':nn.ELU}
-        input_size = self.args.rssm_info['deter_size']
-        output_size = self.args.rssm_embedding_size
-        self.var_networks = [DenseModel(input_size, output_size, self.args.var_disag, 0, [(i-5)/100, i/50]).to(device) for i in range(10)]
         
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.critic_target.load_state_dict(self.critic.state_dict())
 
-        self.world_list = [self.RSSM, self.ObsEncoder, self.ObsDecoder]
-        self.var_optimizer = torch.optim.Adam(get_parameters(self.var_networks), lr=args.lr)
-        self.model_optimizer = torch.optim.Adam(get_parameters(self.world_list), lr=args.lr)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=args.lr)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=args.lr)
+        if args.isExpl:
+            self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=args.lr)
+        else :
+            self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=args.lr*0.1)
 
     def change_morphology(self, graph):
         self.actor.change_morphology(graph)
@@ -88,10 +57,9 @@ class TD3(object):
         state = torch.FloatTensor(state.reshape(1, -1)).to(device)
         with torch.no_grad():
             action = self.actor(state, 'inference').cpu().numpy().flatten()
-
             return action
 
-    def train_single(self, log_var, replay_buffer, iterations, batch_size, discount=0.99,
+    def train_single(self, wm, log_var, replay_buffer, iterations, batch_size, discount=0.99,
                 tau=0.005, policy_noise=0.2, noise_clip=0.5, policy_freq=2):
 
         for it in range(iterations):
@@ -102,62 +70,46 @@ class TD3(object):
             writer = log_var["writer"]
             env_name = log_var["env_name"]
             # sample replay buffer
-            x, y, u, r, d = replay_buffer.sample_seq_len(batch_size, self.args.seq_len)
+            x, y, u, r, d  = replay_buffer.sample(batch_size)
             state = torch.FloatTensor(x).to(device)
             next_state = torch.FloatTensor(y).to(device)
             action = torch.FloatTensor(u).to(device)
-            # reward = torch.FloatTensor(r).to(device)
+            real_reward = torch.FloatTensor(r).to(device)
             done = torch.FloatTensor(1 - d).to(device)
 
+            if self.isExpl:
+                _, reward, _ = wm.rollout_imagination(self.actor, state, done, useDis = True)
+                reward = reward*(1-done)
+                writer.add_scalar('{}_expl_reward'.format(env_name), reward.mean(0).item(), timestep)    
+            else :
+                _, reward, _ = wm.rollout_imagination(self.actor, state, done, useDis = False)
+                reward = reward*(1-done)
+                writer.add_scalar('{}_pseudo_reward'.format(env_name), reward.mean(0).item(), timestep)    
+                
+            # ##########################################################
+            # state_action_dim = self.args.limb_obs_size*self.args.max_num_limbs + self.args.max_num_limbs
+            # state_action = torch.zeros(batch_size, state_action_dim).to(device)
+            # state_action[:, :state.shape[1]] = state
+            # st = self.args.limb_obs_size*self.args.max_num_limbs
+            # ed = st + action.shape[1]
+            # state_action[:, st:ed] = action
 
-            model_loss, kl_loss, obs_loss, preds_loss, posterior = self.representation_loss(next_state, action, done)
-            writer.add_scalar('{}_kl_loss'.format(env_name), kl_loss.item(), timestep)
-            writer.add_scalar('{}_obs_loss'.format(env_name), obs_loss.item(), timestep)
-            writer.add_scalar('{}_preds_loss'.format(env_name), preds_loss.item(), timestep)
+            # with torch.no_grad():
+            #     state_pred = [head(state_action) for head in self.direct_var_networks]
+            #     state_pred = torch.stack(state_pred)
+            #     disag_reward = state_pred.var(0).mean(-1)
+            #     reward = disag_reward[:,None]
+            #     writer.add_scalar('{}_internal_reward'.format(env_name), disag_reward.mean(0).item(), timestep)    
             
-            t = RSSMContState(
-                    posterior.mean[:,0],
-                    posterior.std[:,0],
-                    posterior.stoch[:,0], 
-                    posterior.deter[:,0],
-                )
-            batched_posterior = self.RSSM.rssm_detach(t)
-            
-            with FreezeParameters(self.world_list):
-                _, disags_reward, _ = self.RSSM.rollout_imagination(
-                                        self.args.horizon, 
-                                        self.actor, 
-                                        batched_posterior,
-                                        self.var_networks,
-                                        self.ObsDecoder
-                                )
-            disags_reward = torch.stack((disags_reward))
-            disags_reward = disags_reward.swapaxes(0,1)
-            disags_reward = disags_reward.mean(-1)
-            disags_reward = disags_reward.unsqueeze(-1)
-            disags_reward = torch.cuda.FloatTensor(disags_reward).to(device)
-            writer.add_scalar('{}_disags_reward'.format(env_name), disags_reward.mean(0).item(), timestep)
-            
-            self.model_optimizer.zero_grad()
-            self.var_optimizer.zero_grad()
-            model_loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                                get_parameters(self.world_list), 
-                                self.args.grad_clip
-                            )
-            torch.nn.utils.clip_grad_norm_(
-                                get_parameters(self.var_networks), 
-                                self.args.grad_clip
-                            )
-            self.model_optimizer.step()
-            self.var_optimizer.step()
-
-            x, y, u, r, d = x[:,0], y[:,0], u[:,0], r[:,0], d[:,0]
-            state = torch.FloatTensor(x).to(device)
-            next_state = torch.FloatTensor(y).to(device)
-            action = torch.FloatTensor(u).to(device)
-            reward = torch.FloatTensor(r).to(device)
-            done = torch.FloatTensor(1 - d).to(device)
+            # cer = nn.L1Loss()
+            # for i, head in enumerate(self.direct_var_networks):
+            #     pred = head(state_action)
+            #     pred = pred[:, :next_state.shape[1]]
+            #     loss = cer(pred, next_state)
+            #     self.direct_var_optimizers[i].zero_grad()
+            #     loss.backward()
+            #     self.direct_var_optimizers[i].step()
+            # ##########################################################
 
             # select action according to policy and add clipped noise
             with torch.no_grad():
@@ -169,16 +121,17 @@ class TD3(object):
                 # Qtarget = reward + discount * min_i(Qi(next_state, pi(next_state)))
                 target_Q1, target_Q2 = self.critic_target(next_state, next_action)
                 target_Q = torch.min(target_Q1, target_Q2)
-                if not log_var['normal_mode']:
-                    target_Q = disags_reward + (done * discount * target_Q)
-                else :
-                    target_Q = reward + (done * discount * target_Q)
+                target_Q = reward + (done * discount * target_Q)
 
             # get current Q estimates
             current_Q1, current_Q2 = self.critic(state, action)
 
             # compute critic loss
             critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
+            if self.isExpl:
+                writer.add_scalar('{}_expl_critic_loss'.format(env_name), critic_loss.item(), timestep)
+            else:
+                writer.add_scalar('{}_critic_loss'.format(env_name), critic_loss.item(), timestep)
             # optimize the critic
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
@@ -189,7 +142,11 @@ class TD3(object):
 
                 # compute actor loss
                 actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
-
+                if self.isExpl:
+                    writer.add_scalar('{}_expl_actor_loss'.format(env_name), actor_loss.item(), timestep)
+                else :
+                    writer.add_scalar('{}_actor_loss'.format(env_name), actor_loss.item(), timestep)
+            
                 # optimize the actor
                 self.actor_optimizer.zero_grad()
                 actor_loss.backward()
@@ -205,7 +162,7 @@ class TD3(object):
                     target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
 
-    def train(self, log_var, replay_buffer_list, iterations_list, batch_size, discount=0.99,
+    def train(self, wm, log_var, replay_buffer_list, iterations_list, batch_size, discount=0.99,
               tau=0.005, policy_noise=0.2, noise_clip=0.5, policy_freq=2, graphs=None, envs_train_names=None):
         per_morph_iter = sum(iterations_list) // len(envs_train_names)
         for i, env_name in enumerate(envs_train_names):
@@ -213,7 +170,7 @@ class TD3(object):
             log_var["index"] = i
             replay_buffer = replay_buffer_list[env_name]
             self.change_morphology(graphs[env_name])
-            self.train_single(log_var, replay_buffer, per_morph_iter, batch_size=batch_size, discount=discount,
+            self.train_single(wm, log_var, replay_buffer, per_morph_iter, batch_size=batch_size, discount=discount,
                 tau=tau, policy_noise=policy_noise, noise_clip=noise_clip, policy_freq=policy_freq)
 
     def save(self, fname):
@@ -236,36 +193,38 @@ class TD3(object):
             self.var_networks[i].load_state_dict(torch.load('%s_var_network_%s.pth' % (fname, str(i))))
         
     def representation_loss(self, obs, action, done):
+
         input_size = self.args.limb_obs_size*self.args.max_num_limbs
         obs_x = torch.zeros(obs.shape[0], obs.shape[1], input_size)
         obs_x[:,:,:obs.shape[2]] = obs
         obs_x = obs_x.to(device)
+
+
         embed = self.ObsEncoder(obs_x)
+
         action_x = torch.zeros(action.shape[0], action.shape[1], self.args.max_num_limbs)
         action_x[:,:,:action.shape[2]] = action
         action_x = action_x.to(device)
+
+
         prev_rssm_state = self.RSSM._init_rssm_state(self.args.batch_size)   
-        prior, posterior, preds_disag = self.RSSM.rollout_observation(self.args.seq_len, embed, action_x, done, prev_rssm_state, self.var_networks)
+        prior, posterior, preds_disag_dist = self.RSSM.rollout_observation(self.args.seq_len, embed, action_x, done, prev_rssm_state, self.var_networks)
         post_modelstate = self.RSSM.get_model_state(posterior)   
-        obs_decode = self.ObsDecoder(post_modelstate)
-        obs_loss = self._obs_loss(obs_decode, obs)
-        preds_loss = self._pred_loss(preds_disag, embed)
-        _, _, kl_loss = self._kl_loss(prior, posterior)
+        obs_dist = self.ObsDecoder(post_modelstate)
+        obs_loss = self._obs_loss(obs_dist, obs)
+
+        preds_loss = self._pred_loss(preds_disag_dist, embed)
+        prior_dist, post_dist, kl_loss = self._kl_loss(prior, posterior)
 
         model_loss = kl_loss + obs_loss + preds_loss
-        return model_loss, kl_loss, obs_loss, preds_loss, posterior
+        return model_loss, kl_loss, obs_loss, preds_loss, posterior, prior_dist, post_dist
     
-    def _pred_loss(self, pred_disag, embed):
-        pred_disag = pred_disag.swapaxes(0,2)
-        embed = embed[:,1:,:]
-        embed = embed.unsqueeze(1).repeat(1, pred_disag.shape[1], 1, 1)
-        pred_loss = nn.L1Loss()(pred_disag,embed)
+    def _pred_loss(self, pred_disag_dist, embed):
+        pred_loss = -torch.mean(pred_disag_dist.log_prob(embed))
         return pred_loss
 
-    def _obs_loss(self, obs_decode, obs):
-        obs = obs[:,1:,:]
-        obs_decode = obs_decode[:,:,:obs.shape[2]]
-        obs_loss = nn.L1Loss()(obs_decode, obs)
+    def _obs_loss(self, obs_dist, obs):
+        obs_loss = -torch.mean(obs_dist.log_prob(obs))
         return obs_loss
 
     def _kl_loss(self, prior, posterior):
