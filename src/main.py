@@ -85,7 +85,7 @@ def train(args):
     args.var_disag = {'layers':2, 'node_size':100, 'dist': None, 'activation':nn.ELU}
     args.forward_reward_args = {'layers':2, 'node_size':100, 'dist': None, 'activation':nn.ELU}
     args.seq_len = 5
-    args.horizon = 5
+    args.horizon = 10
     args.grad_clip = 100.0
     wm = WorldModel(encode_size = 64, args = args)
 
@@ -208,8 +208,8 @@ def train(args):
                     collect_done = all(done_list)
 
                 for i in range(num_envs_train):
-                    writer.add_scalar('{}_episode_reward'.format(envs_train_names[i]), episode_reward_list[i], total_timesteps)
-                    writer.add_scalar('{}_episode_len'.format(envs_train_names[i]), episode_timesteps_list[i], total_timesteps)
+                    writer.add_scalar('{}_real_reward'.format(envs_train_names[i]), episode_reward_list[i], total_timesteps)
+                    writer.add_scalar('{}_real_len'.format(envs_train_names[i]), episode_timesteps_list[i], total_timesteps)
                 
                 for i in range(len(envs_train_names)):
                     print("[Test] {} === EpisodeT: {}, Reward: {:.2f}".format(envs_train_names[i],
@@ -308,4 +308,5 @@ def train(args):
 
 if __name__ == "__main__":
     args = get_args()
+    print("device: ", device)
     train(args)

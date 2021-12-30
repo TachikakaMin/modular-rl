@@ -19,7 +19,7 @@ class WorldModel(nn.Module):
         self.rnn = nn.GRUCell(self.action_size, self.encode_size).to(device)
         self.rnn_opt = torch.optim.Adam(self.rnn.parameters(), lr=self.lr)
         self.horizon = self.args.horizon
-        self.reward_discont = 0.8
+        self.reward_discont = 0.9
         self.var_networks = self._build_var_network(self.args.var_disag)
         self.var_networks = [head.to(device) for head in self.var_networks]
         self.var_opts = [torch.optim.Adam(head.parameters(), lr=self.lr) for head in self.var_networks]
@@ -63,7 +63,7 @@ class WorldModel(nn.Module):
                 embed_state = self.ObsEncoder(state_x)
                 recover_state = self.ObsDecoder(embed_state)
                 recover_state = recover_state[:, :state.shape[1]]
-                cer = nn.L1Loss()
+                cer = nn.SmoothL1Loss()
                 loss = cer(recover_state, state)
                 writer.add_scalar('{}_wm_ED_loss'.format(env_name), loss.item(), timestep)
                 self.ED_opt.zero_grad()
@@ -74,6 +74,7 @@ class WorldModel(nn.Module):
                     embed_state = self.ObsEncoder(state_x)
                     next_embed_state = self.ObsEncoder(next_state_x)
                 # train disagreement
+                
                 bz = action.shape[0]
                 prev_action_x = torch.zeros(bz, self.action_size).to(device) # (bz, total_action_size)
                 prev_action_x[:, :action.shape[1]] = action
@@ -87,17 +88,22 @@ class WorldModel(nn.Module):
                     self.var_opts[i].step()
 
                 # train imagenation
-                _, next_rssm_state = self.rssm_imagine(action, embed_state, done)
+                cer = nn.L1Loss()
+                embed_state2 = self.ObsEncoder(state_x)
+                _, next_rssm_state = self.rssm_imagine(action, embed_state2, done)
                 next_state_imagine = self.ObsDecoder(next_rssm_state)
                 next_state_imagine = next_state_imagine[:, :next_state.shape[1]]
                 loss = cer(next_state_imagine, next_state)
                 writer.add_scalar('{}_wm_rnn_loss'.format(env_name), loss.item(), timestep)
                     
+                self.ED_opt.zero_grad()
                 self.rnn_opt.zero_grad()
                 loss.backward()
                 self.rnn_opt.step()
+                self.ED_opt.step()
 
                 # train reward part
+                cer = nn.MSELoss()
                 state2_action = torch.cat([embed_state, next_embed_state], dim=-1)
                 state2_action = torch.cat([state2_action, prev_action_x], dim=-1)
                 pred_reward = self.rssm_forward_reward_head(state2_action)
@@ -126,7 +132,9 @@ class WorldModel(nn.Module):
     def _build_var_network(self, var_args):
         input_size = self.action_size + self.encode_size  # input = embed_state + action
         output_size = self.encode_size # output = next_embed_state
-        return [DenseModel(input_size, output_size, var_args, 0, [(i-5)/100, i/50]).to(device) for i in range(10)]
+        return [DenseModel(input_size, output_size, var_args, 
+                0, [(i-5)/100, (i+1)/50]).to(device) 
+                    for i in range(10)]
         
     def rssm_imagine(self, prev_action, prev_embed_state, nonterms, useDis = True):
 
@@ -153,26 +161,30 @@ class WorldModel(nn.Module):
 
         return reward, next_embed_state
     
-    def rollout_imagination(self, actor:nn.Module, state, done, useDis = True):
+    def rollout_imagination(self, actor:nn.Module, state, useDis = True):
         batch_size = state.shape[0]
         state_x = torch.zeros(batch_size, self.state_size).to(device)
         state_x[:, :state.shape[1]] = state
         state_x = state_x.to(device)
         prev_embed_state = self.ObsEncoder(state_x)
         rssm_state = prev_embed_state
+
         next_rssm_states = []
         disag_reward = []
         action_rssm = []
         reward = 0
 
+        obs_decode = self.ObsDecoder(rssm_state)
+        obs_decode = obs_decode[:, :state.shape[1]]
         for t in range(self.horizon):
-            obs_decode = self.ObsDecoder(rssm_state)
-            obs_decode = obs_decode[:, :state.shape[1]]
             action = actor(obs_decode)
             disag, rssm_state = self.rssm_imagine(action, rssm_state, True, useDis)
-            next_rssm_states.append(rssm_state)
-            disag_reward.append(disag)
-            reward += disag*(self.reward_discont**t)
+            
+            obs_decode = self.ObsDecoder(rssm_state)
+            obs_decode = obs_decode[:, :state.shape[1]]
+            next_rssm_states.append(obs_decode)
+            disag_reward.append(disag*(self.reward_discont**t))
             action_rssm.append(action)
+            reward += disag*(self.reward_discont**t)
 
-        return next_rssm_states, reward*done, action_rssm
+        return next_rssm_states, disag_reward, action_rssm, reward

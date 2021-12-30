@@ -78,88 +78,72 @@ class TD3(object):
             done = torch.FloatTensor(1 - d).to(device)
 
             if self.isExpl:
-                _, reward, _ = wm.rollout_imagination(self.actor, state, done, useDis = True)
-                reward = reward*(1-done)
-                writer.add_scalar('{}_expl_reward'.format(env_name), reward.mean(0).item(), timestep)    
+                next_rssm_states, disag_reward, action_rssm, tot_reward = wm.rollout_imagination(self.actor, state, useDis = True)
+                tot_reward = tot_reward*done
+                writer.add_scalar('{}_expl_reward'.format(env_name), tot_reward.mean(0).item(), timestep)    
             else :
-                _, reward, _ = wm.rollout_imagination(self.actor, state, done, useDis = False)
-                reward = reward*(1-done)
-                writer.add_scalar('{}_pseudo_reward'.format(env_name), reward.mean(0).item(), timestep)    
-                
-            # ##########################################################
-            # state_action_dim = self.args.limb_obs_size*self.args.max_num_limbs + self.args.max_num_limbs
-            # state_action = torch.zeros(batch_size, state_action_dim).to(device)
-            # state_action[:, :state.shape[1]] = state
-            # st = self.args.limb_obs_size*self.args.max_num_limbs
-            # ed = st + action.shape[1]
-            # state_action[:, st:ed] = action
-
-            # with torch.no_grad():
-            #     state_pred = [head(state_action) for head in self.direct_var_networks]
-            #     state_pred = torch.stack(state_pred)
-            #     disag_reward = state_pred.var(0).mean(-1)
-            #     reward = disag_reward[:,None]
-            #     writer.add_scalar('{}_internal_reward'.format(env_name), disag_reward.mean(0).item(), timestep)    
+                next_rssm_states, disag_reward, action_rssm, tot_reward = wm.rollout_imagination(self.actor, state, useDis = False)
+                tot_reward = tot_reward*done
+                writer.add_scalar('{}_pseudo_reward'.format(env_name), tot_reward.mean(0).item(), timestep)    
             
-            # cer = nn.L1Loss()
-            # for i, head in enumerate(self.direct_var_networks):
-            #     pred = head(state_action)
-            #     pred = pred[:, :next_state.shape[1]]
-            #     loss = cer(pred, next_state)
-            #     self.direct_var_optimizers[i].zero_grad()
-            #     loss.backward()
-            #     self.direct_var_optimizers[i].step()
-            # ##########################################################
+            
+            next_state = state 
+            for h in range(wm.horizon):
+                with torch.no_grad():
+                    last_state = next_state
+                    reward = disag_reward[h].detach()
+                    next_state = next_rssm_states[h].detach()
+                    action = action_rssm[h].detach()
 
-            # select action according to policy and add clipped noise
-            with torch.no_grad():
-                noise = torch.FloatTensor(u).data.normal_(0, policy_noise).to(device)
-                noise = noise.clamp(-noise_clip, noise_clip)
-                next_action = self.actor_target(next_state) + noise
-                next_action = next_action.clamp(-self.args.max_action, self.args.max_action)
+                # select action according to policy and add clipped noise
+                with torch.no_grad():
+                    noise = torch.FloatTensor(u).data.normal_(0, policy_noise).to(device)
+                    noise = noise.clamp(-noise_clip, noise_clip)
+                    next_action = self.actor_target(next_state) + noise
+                    next_action = next_action.clamp(-self.args.max_action, self.args.max_action)
 
-                # Qtarget = reward + discount * min_i(Qi(next_state, pi(next_state)))
-                target_Q1, target_Q2 = self.critic_target(next_state, next_action)
-                target_Q = torch.min(target_Q1, target_Q2)
-                target_Q = reward + (done * discount * target_Q)
+                    # Qtarget = reward + discount * min_i(Qi(next_state, pi(next_state)))
+                    target_Q1, target_Q2 = self.critic_target(next_state, next_action)
+                    target_Q = torch.min(target_Q1, target_Q2)
+                    target_Q = reward + (done * discount * target_Q)
 
-            # get current Q estimates
-            current_Q1, current_Q2 = self.critic(state, action)
+                # get current Q estimates
+                current_Q1, current_Q2 = self.critic(last_state, action)
 
-            # compute critic loss
-            critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
-            if self.isExpl:
-                writer.add_scalar('{}_expl_critic_loss'.format(env_name), critic_loss.item(), timestep)
-            else:
-                writer.add_scalar('{}_critic_loss'.format(env_name), critic_loss.item(), timestep)
-            # optimize the critic
-            self.critic_optimizer.zero_grad()
-            critic_loss.backward()
-            self.critic_optimizer.step()
-
-            # delayed policy updates
-            if it % policy_freq == 0:
-
-                # compute actor loss
-                actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
+                # compute critic loss
+                critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
                 if self.isExpl:
-                    writer.add_scalar('{}_expl_actor_loss'.format(env_name), actor_loss.item(), timestep)
-                else :
-                    writer.add_scalar('{}_actor_loss'.format(env_name), actor_loss.item(), timestep)
-            
-                # optimize the actor
-                self.actor_optimizer.zero_grad()
-                actor_loss.backward()
-                self.actor_optimizer.step()
+                    writer.add_scalar('{}_expl_critic_loss'.format(env_name), critic_loss.item(), timestep*wm.horizon + h)
+                else:
+                    writer.add_scalar('{}_critic_loss'.format(env_name), critic_loss.item(), timestep*wm.horizon + h)
+                # optimize the critic
+                self.critic_optimizer.zero_grad()
+                critic_loss.backward()
+                self.critic_optimizer.step()
 
-                # update the frozen target models
-                for param, target_param in zip(self.critic.parameters(),
-                                               self.critic_target.parameters()):
-                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                # delayed policy updates
+                if (it*wm.horizon + h) % policy_freq == 0:
 
-                for param, target_param in zip(self.actor.parameters(),
-                                               self.actor_target.parameters()):
-                    target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+                    # compute actor loss
+                    actor_loss = -self.critic.Q1(last_state, self.actor(last_state)).mean()
+                    if self.isExpl:
+                        writer.add_scalar('{}_expl_actor_loss'.format(env_name), actor_loss.item(), timestep*wm.horizon + h)
+                    else :
+                        writer.add_scalar('{}_actor_loss'.format(env_name), actor_loss.item(), timestep*wm.horizon + h)
+                
+                    # optimize the actor
+                    self.actor_optimizer.zero_grad()
+                    actor_loss.backward()
+                    self.actor_optimizer.step()
+
+                    # update the frozen target models
+                    for param, target_param in zip(self.critic.parameters(),
+                                                self.critic_target.parameters()):
+                        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
+
+                    for param, target_param in zip(self.actor.parameters(),
+                                                self.actor_target.parameters()):
+                        target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
 
 
     def train(self, wm, log_var, replay_buffer_list, iterations_list, batch_size, discount=0.99,
