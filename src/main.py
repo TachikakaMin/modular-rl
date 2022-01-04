@@ -82,9 +82,10 @@ def train(args):
 
     args.obs_encoder = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
     args.obs_decoder = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
-    args.var_disag = {'layers':2, 'node_size':100, 'dist': None, 'activation':nn.ELU}
-    args.forward_reward_args = {'layers':2, 'node_size':100, 'dist': None, 'activation':nn.ELU}
-    args.seq_len = 5
+    args.var_disag = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
+    args.done_head = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
+    args.forward_reward_args = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
+
     args.horizon = 10
     args.grad_clip = 100.0
     wm = WorldModel(encode_size = 64, args = args)

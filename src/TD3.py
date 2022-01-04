@@ -61,9 +61,9 @@ class TD3(object):
 
     def train_single(self, wm, log_var, replay_buffer, iterations, batch_size, discount=0.99,
                 tau=0.005, policy_noise=0.2, noise_clip=0.5, policy_freq=2):
-
+        print("[iterations]: ", iterations)
         for it in range(iterations):
-
+            print(it)
             env_index = log_var["index"]
             timestep = log_var["total_train_timestep_list"][env_index]
             log_var["total_train_timestep_list"][env_index] = timestep + 1
@@ -176,58 +176,3 @@ class TD3(object):
         for i,_ in enumerate(self.var_networks):
             self.var_networks[i].load_state_dict(torch.load('%s_var_network_%s.pth' % (fname, str(i))))
         
-    def representation_loss(self, obs, action, done):
-
-        input_size = self.args.limb_obs_size*self.args.max_num_limbs
-        obs_x = torch.zeros(obs.shape[0], obs.shape[1], input_size)
-        obs_x[:,:,:obs.shape[2]] = obs
-        obs_x = obs_x.to(device)
-
-
-        embed = self.ObsEncoder(obs_x)
-
-        action_x = torch.zeros(action.shape[0], action.shape[1], self.args.max_num_limbs)
-        action_x[:,:,:action.shape[2]] = action
-        action_x = action_x.to(device)
-
-
-        prev_rssm_state = self.RSSM._init_rssm_state(self.args.batch_size)   
-        prior, posterior, preds_disag_dist = self.RSSM.rollout_observation(self.args.seq_len, embed, action_x, done, prev_rssm_state, self.var_networks)
-        post_modelstate = self.RSSM.get_model_state(posterior)   
-        obs_dist = self.ObsDecoder(post_modelstate)
-        obs_loss = self._obs_loss(obs_dist, obs)
-
-        preds_loss = self._pred_loss(preds_disag_dist, embed)
-        prior_dist, post_dist, kl_loss = self._kl_loss(prior, posterior)
-
-        model_loss = kl_loss + obs_loss + preds_loss
-        return model_loss, kl_loss, obs_loss, preds_loss, posterior, prior_dist, post_dist
-    
-    def _pred_loss(self, pred_disag_dist, embed):
-        pred_loss = -torch.mean(pred_disag_dist.log_prob(embed))
-        return pred_loss
-
-    def _obs_loss(self, obs_dist, obs):
-        obs_loss = -torch.mean(obs_dist.log_prob(obs))
-        return obs_loss
-
-    def _kl_loss(self, prior, posterior):
-        prior_dist = self.RSSM.get_dist(prior)
-        post_dist = self.RSSM.get_dist(posterior)
-        if self.args.kl_info['use_kl_balance']:
-            alpha = self.args.kl_info['kl_balance_scale']
-            kl_lhs = torch.mean(torch.distributions.kl.kl_divergence(self.RSSM.get_dist(self.RSSM.rssm_detach(posterior)), prior_dist))
-            kl_rhs = torch.mean(torch.distributions.kl.kl_divergence(post_dist, self.RSSM.get_dist(self.RSSM.rssm_detach(prior))))
-            if self.args.kl_info['use_free_nats']:
-                free_nats = self.args.kl_info['free_nats']
-                kl_lhs = torch.max(kl_lhs,kl_lhs.new_full(kl_lhs.size(), free_nats))
-                kl_rhs = torch.max(kl_rhs,kl_rhs.new_full(kl_rhs.size(), free_nats))
-            kl_loss = alpha*kl_lhs + (1-alpha)*kl_rhs
-
-        else: 
-            kl_loss = torch.mean(torch.distributions.kl.kl_divergence(post_dist, prior_dist))
-            if self.args.kl_info['use_free_nats']:
-                free_nats = self.args.kl_info['free_nats']
-                kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), free_nats))
-        return prior_dist, post_dist, kl_loss
-    
