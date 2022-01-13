@@ -6,7 +6,7 @@ import numpy as np
 from utils import MLPBase
 import torchfold
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+# device = torch.device("cpu")
 class DisagreeMLP(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(DisagreeMLP, self).__init__()
@@ -147,16 +147,20 @@ class ActorGraphPolicy(nn.Module):
             if not self.disable_fold:
                 for i in range(self.num_limbs):
                     setattr(self, "actor" + str(i).zfill(3), self.actor[i])
-
+        
         if not self.disable_fold:
             for i in range(self.max_children):
                 setattr(self, 'get_{}'.format(i), self.addFunction(i))
-
-    def forward(self, state, mode='train'):
+                
+    def forward(self, state, mode='train', tmp_bs = 0):
         self.clear_buffer()
         if mode == 'inference':
             temp = self.batch_size
             self.batch_size = 1
+        if tmp_bs:
+            temp = self.batch_size
+            self.batch_size = tmp_bs
+            
         if not self.disable_fold:
             self.fold = torchfold.Fold()
             self.fold.cuda()
@@ -197,6 +201,9 @@ class ActorGraphPolicy(nn.Module):
             self.msg_down = torch.stack(self.msg_down, dim=-1)
 
         if mode == 'inference':
+            self.batch_size = temp
+
+        if tmp_bs:
             self.batch_size = temp
 
         return torch.squeeze(self.action)

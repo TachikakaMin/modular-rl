@@ -36,16 +36,15 @@ def save_model(checkpoint_path, real_policy, expl_policy, wm, total_timesteps, t
         'expl_actor_optimizer_state': expl_policy.actor_optimizer.state_dict(),
         'expl_critic_optimizer_state': expl_policy.critic_optimizer.state_dict(),
         
-        'wm_rnn': wm.rnn.state_dict(),
-        'wm_rnn_opt': wm.rnn_opt.state_dict(),
+        'wm_RSSM': wm.RSSM.state_dict(),
         'wm_ObsEncoder': wm.ObsEncoder.state_dict(),
         'wm_ObsDecoder': wm.ObsDecoder.state_dict(),
-        'wm_ED_opt': wm.ED_opt.state_dict(),
-        'wm_rssm_forward_reward_head': wm.rssm_forward_reward_head.state_dict(),
-        'wm_reward_opt': wm.reward_opt.state_dict(),
+        'wm_RewardDecoder': wm.RewardDecoder.state_dict(),
+        'wm_DiscountModel' : wm.DiscountModel.state_dict(),
         "wm_var_networks" : {i : wm.var_networks[i].state_dict() for i in range(len(wm.var_networks)) },
-        'wm_var_opts': {i : wm.var_opts[i].state_dict() for i in range(len(wm.var_opts)) },
-        
+        'wm_model_optimizer': wm.model_optimizer.state_dict(),
+        'wm_var_optimizer': wm.var_optimizer.state_dict(),
+
         'total_timesteps': total_timesteps,
         'total_train_timestep_list': total_train_timestep_list,
         'episode_num': episode_num,
@@ -95,16 +94,17 @@ def load_checkpoint(load_exp_path, rb_path, real_policy, expl_policy, wm, args):
         expl_policy.critic_optimizer.load_state_dict(checkpoint['expl_critic_optimizer_state'])
         expl_policy.args = checkpoint['expl_args']
 
-        wm.rnn.load_state_dict(checkpoint['wm_rnn'])
-        wm.rnn_opt.load_state_dict(checkpoint['wm_rnn_opt'])
+        wm.RSSM.load_state_dict(checkpoint['wm_RSSM'])
         wm.ObsEncoder.load_state_dict(checkpoint['wm_ObsEncoder'])
         wm.ObsDecoder.load_state_dict(checkpoint['wm_ObsDecoder'])
-        wm.ED_opt.load_state_dict(checkpoint['wm_ED_opt'])
-        wm.rssm_forward_reward_head.load_state_dict(checkpoint['wm_rssm_forward_reward_head'])
-        wm.reward_opt.load_state_dict(checkpoint['wm_reward_opt'])
+        wm.RewardDecoder.load_state_dict(checkpoint['wm_RewardDecoder'])
+        wm.model_optimizer.load_state_dict(checkpoint['wm_model_optimizer'])
+        wm.var_optimizer.load_state_dict(checkpoint['wm_var_optimizer'])
+        wm.DiscountModel.load_state_dict(checkpoint['wm_DiscountModel'])
+
         for i in range(10):
             wm.var_networks[i].load_state_dict(checkpoint['wm_var_networks'][i])
-            wm.var_opts[i].load_state_dict(checkpoint['wm_var_opts'][i])
+            
         wm.args = checkpoint['wm_args']
 
     # load replay buffer

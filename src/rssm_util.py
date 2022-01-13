@@ -45,8 +45,7 @@ class FreezeParameters:
 
 class RSSMUtils(object):
     '''utility functions for dealing with rssm states'''
-    def __init__(self, rssm_type, info):
-        self.rssm_type = rssm_type
+    def __init__(self, info):
         self.deter_size = info['deter_size']
         self.stoch_size = info['stoch_size']
         self.min_std = info['min_std']

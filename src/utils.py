@@ -181,10 +181,10 @@ class ReplayBuffer(object):
 
     def sample_seq_len(self, batch_size, seq_len):
         ind = np.random.randint(0, len(self.storage)-seq_len, size=batch_size)
-        x, y, u, r, d= [], [], [], [], [], [], []
+        x, y, u, r, d= [], [], [], [], []
 
         for i in ind:
-            x1, y1, u1, r1, d1 = [], [], [], [], [], [], []
+            x1, y1, u1, r1, d1 = [], [], [], [], []
             for j in range(i,i+seq_len):
                 data = self.storage[j]
                 st = 0

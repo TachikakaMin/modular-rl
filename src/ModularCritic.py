@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from utils import MLPBase
 import torchfold
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+# device = torch.device("cpu")
 
 class CriticVanilla(nn.Module):
     """a vanilla critic module that outputs a node's q-values given only its observation and action(no message between nodes)"""
@@ -185,7 +185,10 @@ class CriticGraphPolicy(nn.Module):
             for i in range(self.max_children):
                 setattr(self, 'get_{}'.format(i), self.addFunction(i))
 
-    def forward(self, state, action):
+    def forward(self, state, action, tmp_bs=0):
+        if tmp_bs:
+            temp = self.batch_size
+            self.batch_size = tmp_bs
         self.clear_buffer()
         if not self.disable_fold:
             self.fold = torchfold.Fold()
@@ -234,9 +237,14 @@ class CriticGraphPolicy(nn.Module):
             self.x1 = torch.stack(self.x1, dim=-1)  # (bs,num_limbs,1)
             self.x2 = torch.stack(self.x2, dim=-1)
 
+        if tmp_bs:
+            self.batch_size = temp
         return torch.sum(self.x1, dim=-1), torch.sum(self.x2, dim=-1)
 
-    def Q1(self, state, action):
+    def Q1(self, state, action, tmp_bs=0):
+        if tmp_bs:
+            temp = self.batch_size
+            self.batch_size = tmp_bs
         self.clear_buffer()
         if not self.disable_fold:
             self.fold = torchfold.Fold()
@@ -282,6 +290,8 @@ class CriticGraphPolicy(nn.Module):
         else:
             self.x1 = torch.stack(self.x1, dim=-1)  # (bs,num_limbs,1)
 
+        if tmp_bs:
+            self.batch_size = temp
         return torch.sum(self.x1, dim=-1)
 
     def bottom_up_transmission(self, node):
