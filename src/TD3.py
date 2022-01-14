@@ -123,10 +123,12 @@ class TD3(object):
                         next_state = wm.ObsDecoder(next_state)   
                         next_state = next_state.sample()[:, :modular_state_size]
 
-                    if self.isExpl:
-                        reward = disag_reward[h+1].detach()
-                    else:
-                        reward = imag_reward[h+1].detach()
+                    # if self.isExpl:
+                    #     reward = disag_reward[h+1].detach()
+                    # else:
+                    #     reward = imag_reward[h+1].detach()
+                    reward = imag_reward[h+1].detach()
+                    
                     action = imag_actions[h+1].detach()[:, :modular_action_size]
                     done = discount_arr[h+1].detach()
                     done = torch.clamp(done, 0, 1)

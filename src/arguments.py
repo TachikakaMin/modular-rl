@@ -42,7 +42,7 @@ def get_args():
         help='learning rate for Adam')
     parser.add_argument("--max_episode_steps", type=int, default=1000,
         help="maximum number of timesteps allowed in one episode")
-    parser.add_argument("--save_freq", default=1e3, type=int,
+    parser.add_argument("--save_freq", default=1e4, type=int,
         help="How often (time steps) we save the model and the replay buffer?")
     parser.add_argument("--td", action="store_true",
         help="enable top down message passing")

@@ -3,8 +3,8 @@ import numpy as np
 import torch
 import os
 import utils
-# import TD3
-import TD3_bak as TD3
+import TD3
+# import TD3_bak as TD3
 from copy import deepcopy as dp
 import json
 import time
@@ -139,9 +139,9 @@ def train(args):
         if collect_done:
             # log updates and train policy
             if this_training_timesteps != 0:
-                # print("train world model")
-                # log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
-                # wm.train(log_var, episode_timesteps_list, args.batch_size, replay_buffer, envs_train_names=envs_train_names[:num_envs_train])
+                print("train world model")
+                log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
+                wm.train(log_var, episode_timesteps_list, args.batch_size, replay_buffer, envs_train_names=envs_train_names[:num_envs_train])
 
                 print("train expl_policy")
                 log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
@@ -170,54 +170,54 @@ def train(args):
                                                                        episode_timesteps_list[i],
                                                                        episode_reward_list[i]))
 
-            if timesteps_since_test >= args.test_real_freq:
-                print("start test real policy")
-                timesteps_since_test = 0
+            # if timesteps_since_test >= args.test_real_freq:
+            #     print("start test real policy")
+            #     timesteps_since_test = 0
                 
-                collect_done = False
-                obs_list = envs_train.reset()
-                done_list = [False for i in range(num_envs_train)]
+            #     collect_done = False
+            #     obs_list = envs_train.reset()
+            #     done_list = [False for i in range(num_envs_train)]
                 
-                episode_reward_list_buffer = [0 for i in range(num_envs_train)]
-                episode_reward_list = [0 for i in range(num_envs_train)]
-                episode_timesteps_list = [0 for i in range(num_envs_train)]
+            #     episode_reward_list_buffer = [0 for i in range(num_envs_train)]
+            #     episode_reward_list = [0 for i in range(num_envs_train)]
+            #     episode_timesteps_list = [0 for i in range(num_envs_train)]
 
-                # while not collect_done: 
-                #     action_list = []
-                #     for i in range(num_envs_train):
-                #         real_policy.change_morphology(args.graphs[envs_train_names[i]])
-                #         obs = np.array(obs_list[i][:args.limb_obs_size * len(args.graphs[envs_train_names[i]])])
-                #         policy_action = real_policy.select_action(obs)
-                #         if args.expl_noise != 0:
-                #             policy_action = (policy_action + np.random.normal(0, args.expl_noise,
-                #                 size=policy_action.size)).clip(envs_train.action_space.low[0],
-                #                 envs_train.action_space.high[0])
-                #         policy_action = np.append(policy_action, np.array([0 for i in range(max_num_limbs - policy_action.size)]))
-                #         action_list.append(policy_action)
+            #     while not collect_done: 
+            #         action_list = []
+            #         for i in range(num_envs_train):
+            #             real_policy.change_morphology(args.graphs[envs_train_names[i]])
+            #             obs = np.array(obs_list[i][:args.limb_obs_size * len(args.graphs[envs_train_names[i]])])
+            #             policy_action = real_policy.select_action(obs)
+            #             if args.expl_noise != 0:
+            #                 policy_action = (policy_action + np.random.normal(0, args.expl_noise,
+            #                     size=policy_action.size)).clip(envs_train.action_space.low[0],
+            #                     envs_train.action_space.high[0])
+            #             policy_action = np.append(policy_action, np.array([0 for i in range(max_num_limbs - policy_action.size)]))
+            #             action_list.append(policy_action)
 
-                #     new_obs_list, reward_list, curr_done_list, _ = envs_train.step(action_list)
-                #     done_list = [done_list[i] or curr_done_list[i] for i in range(num_envs_train)]
+            #         new_obs_list, reward_list, curr_done_list, _ = envs_train.step(action_list)
+            #         done_list = [done_list[i] or curr_done_list[i] for i in range(num_envs_train)]
 
-                #     for i in range(num_envs_train):
-                #         episode_reward_list_buffer[i] += reward_list[i]
-                #         if curr_done_list[i] and episode_reward_list[i] == 0:
-                #             episode_reward_list[i] = episode_reward_list_buffer[i]
-                #             episode_reward_list_buffer[i] = 0
-                #         if episode_timesteps_list[i] + 1 == args.max_episode_steps:
-                #             done_list[i] = True
-                #         if not done_list[i]:
-                #             episode_timesteps_list[i] += 1
-                #     obs_list = new_obs_list
-                #     collect_done = all(done_list)
+            #         for i in range(num_envs_train):
+            #             episode_reward_list_buffer[i] += reward_list[i]
+            #             if curr_done_list[i] and episode_reward_list[i] == 0:
+            #                 episode_reward_list[i] = episode_reward_list_buffer[i]
+            #                 episode_reward_list_buffer[i] = 0
+            #             if episode_timesteps_list[i] + 1 == args.max_episode_steps:
+            #                 done_list[i] = True
+            #             if not done_list[i]:
+            #                 episode_timesteps_list[i] += 1
+            #         obs_list = new_obs_list
+            #         collect_done = all(done_list)
 
-                # for i in range(num_envs_train):
-                #     writer.add_scalar('{}_real_reward'.format(envs_train_names[i]), episode_reward_list[i], total_timesteps)
-                #     writer.add_scalar('{}_real_len'.format(envs_train_names[i]), episode_timesteps_list[i], total_timesteps)
+            #     for i in range(num_envs_train):
+            #         writer.add_scalar('{}_real_reward'.format(envs_train_names[i]), episode_reward_list[i], total_timesteps)
+            #         writer.add_scalar('{}_real_len'.format(envs_train_names[i]), episode_timesteps_list[i], total_timesteps)
                 
-                # for i in range(len(envs_train_names)):
-                #     print("[Test] {} === EpisodeT: {}, Reward: {:.2f}".format(envs_train_names[i],
-                #                                                        episode_timesteps_list[i],
-                #                                                        episode_reward_list[i]))
+            #     for i in range(len(envs_train_names)):
+            #         print("[Test] {} === EpisodeT: {}, Reward: {:.2f}".format(envs_train_names[i],
+            #                                                            episode_timesteps_list[i],
+            #                                                            episode_reward_list[i]))
  
 
             # save model and replay buffers
