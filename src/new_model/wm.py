@@ -99,11 +99,11 @@ class WorldModel(object):
                 grad_norm_model = torch.nn.utils.clip_grad_norm_(get_parameters(self.world_list), self.grad_clip_norm)
                 self.model_optimizer.step()
 
-                self.var_optimizer.zero_grad()
-                disag_loss = sum(disag_losses)
-                disag_loss.backward()
-                grad_norm_model = torch.nn.utils.clip_grad_norm_(get_parameters(self.var_networks), self.grad_clip_norm)
-                self.var_optimizer.step()
+                # self.var_optimizer.zero_grad()
+                # disag_loss = sum(disag_losses)
+                # disag_loss.backward()
+                # grad_norm_model = torch.nn.utils.clip_grad_norm_(get_parameters(self.var_networks), self.grad_clip_norm)
+                # self.var_optimizer.step()
 
 
     def get_disag_reward(self, action_state_embeds):
@@ -121,10 +121,10 @@ class WorldModel(object):
         obs_dist = self.ObsDecoder(post_modelstate[:-1])                     #t to t+seq_len-1  
         reward_dist = self.RewardDecoder(post_modelstate[:-1])               #t to t+seq_len-1  
         pcont_dist = self.DiscountModel(post_modelstate[:-1])                #t to t+seq_len-1   
-        disag_dist = [head(action_state_embeds.detach()) for head in self.var_networks]
+        # disag_dist = [head(action_state_embeds.detach()) for head in self.var_networks]
 
-
-        disag_losses = self._disag_loss(disag_dist, post_modelstate.detach())
+        disag_losses = [0]
+        # disag_losses = self._disag_loss(disag_dist, post_modelstate.detach())
         obs_loss = self._obs_loss(obs_dist, obs[:-1])
         reward_loss = self._reward_loss(reward_dist, rewards[1:])
         pcont_loss = self._pcont_loss(pcont_dist, nonterms[1:])

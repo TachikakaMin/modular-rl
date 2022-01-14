@@ -8,7 +8,7 @@ def get_args():
         help="which morphology env to run (walker, hopper, etc)")
     parser.add_argument("--custom_xml", type=str, default=None,
         help="path to MuJoCo xml files (can be either one file or a directory containing multiple files)")
-    parser.add_argument("--start_timesteps", default=1e4, type=int,
+    parser.add_argument("--start_timesteps", default=4e3, type=int,
         help="How many time steps purely random policy is run for?")
     parser.add_argument("--start_normal_timesteps", default=1e5, type=int,
         help="How many time steps purely random policy is run for?")

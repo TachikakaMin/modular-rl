@@ -3,8 +3,8 @@ import numpy as np
 import torch
 import os
 import utils
-import TD3
-# import TD3_bak as TD3
+# import TD3
+import TD3_bak as TD3
 from copy import deepcopy as dp
 import json
 import time
@@ -144,7 +144,8 @@ def train(args):
                 wm.train(log_var, episode_timesteps_list, args.batch_size, replay_buffer, envs_train_names=envs_train_names[:num_envs_train])
 
                 print("train expl_policy")
-                log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
+                # log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
+                log_var = {"writer": writer, "total_train_timestep_list": total_train_timestep_list}
                 expl_policy.train(wm, log_var, replay_buffer, episode_timesteps_list, args.batch_size,
                             args.discount, args.tau, args.policy_noise, args.noise_clip,
                             args.policy_freq, graphs=args.graphs, envs_train_names=envs_train_names[:num_envs_train])

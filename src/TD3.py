@@ -104,8 +104,8 @@ class TD3(object):
                 
             imag_modelstates = wm.RSSM.get_model_state(imag_rssm_states)
             with FreezeParameters(wm.world_list):
-                disag_reward = wm.get_disag_reward(state_action_embeds)
-                disag_reward = torch.unsqueeze(disag_reward, dim=-1)
+                # disag_reward = wm.get_disag_reward(state_action_embeds)
+                # disag_reward = torch.unsqueeze(disag_reward, dim=-1)
                 imag_reward_dist = wm.RewardDecoder(imag_modelstates)
                 imag_reward = imag_reward_dist.mean
                 discount_dist = wm.DiscountModel(imag_modelstates)
