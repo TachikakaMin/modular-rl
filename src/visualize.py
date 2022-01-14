@@ -67,13 +67,12 @@ def generate_video(args):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    vis_policy = expl_policy
-
+    
     # visualize ===========================================================
     for i, env_name in enumerate(env_names):
         # create env
         env = envs_train[i]()
-        vis_policy.change_morphology(args.graphs[env_name])
+        real_policy.change_morphology(args.graphs[env_name])
 
         # create unique temp frame dir
         count = 0
@@ -102,7 +101,7 @@ def generate_video(args):
                 done = False
                 episode_reward = 0
             obs = np.array(obs[:args.limb_obs_size * len(args.graphs[env_name])])
-            action = vis_policy.select_action(obs)
+            action = real_policy.select_action(obs)
             # perform action in the environment
             new_obs, reward, done, _ = env.step(action)
             episode_reward += reward
@@ -131,7 +130,7 @@ def generate_video(args):
     for i, env_name in enumerate(env_names):
         # create env
         env = envs_train[i]()
-        vis_policy.change_morphology(args.graphs[env_name])
+        expl_policy.change_morphology(args.graphs[env_name])
 
         # create unique temp frame dir
         count = 0
@@ -160,7 +159,7 @@ def generate_video(args):
                 done = False
                 episode_reward = 0
             obs = np.array(obs[:args.limb_obs_size * len(args.graphs[env_name])])
-            action = vis_policy.select_action(obs)
+            action = expl_policy.select_action(obs)
             # perform action in the environment
             new_obs, reward, done, _ = env.step(action)
             episode_reward += reward
