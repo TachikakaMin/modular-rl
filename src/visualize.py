@@ -161,10 +161,10 @@ def generate_video(args):
             obs = np.array(obs[:args.limb_obs_size * len(args.graphs[env_name])])
             action = expl_policy.select_action(obs)
             print("expl action: ", action)
-            action = (action + np.random.normal(0, args.expl_noise,
-                        size=action.size)).clip(env.action_space.low[0],
-                        env.action_space.high[0])
-            print("expl action: ", action)
+            # action = (action + np.random.normal(0, args.expl_noise,
+            #             size=action.size)).clip(env.action_space.low[0],
+            #             env.action_space.high[0])
+            # print("expl action: ", action)
             # perform action in the environment
             new_obs, reward, done, _ = env.step(action)
             episode_reward += reward
