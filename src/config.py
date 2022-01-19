@@ -4,4 +4,4 @@ BASE_MODULAR_ENV_PATH = './src/environments/ModularEnv.py'
 DATA_DIR = './src/results'
 BUFFER_DIR = './src/buffers'
 VIDEO_DIR = './src/results/videos'
-VIDEO_RESOLUATION = (480, 480)
+VIDEO_RESOLUATION = (500, 500, 3)

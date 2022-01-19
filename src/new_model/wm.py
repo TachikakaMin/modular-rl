@@ -9,6 +9,7 @@ from .algorithm import compute_return
 
 
 from .dense import DenseModel
+from .pixel import ObsDecoder, ObsEncoder, ConvDecoder
 from .rssm import RSSM
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -90,8 +91,8 @@ class WorldModel(object):
                 writer.add_scalar('{}_wm_reward_loss'.format(env_name), reward_loss.item(), timestep)
                 writer.add_scalar('{}_wm_reward_loss'.format(env_name), reward_loss.item(), timestep)
                 writer.add_scalar('{}_wm_reward_loss'.format(env_name), reward_loss.item(), timestep)
-                for k in range(10):
-                    writer.add_scalar('{}_wm_disag_head_{}_loss'.format(env_name, k), disag_losses[k].item(), timestep)
+                # for k in range(10):
+                #     writer.add_scalar('{}_wm_disag_head_{}_loss'.format(env_name, k), disag_losses[k].item(), timestep)
                 writer.add_scalar('{}_wm_pcont_loss'.format(env_name), pcont_loss.item(), timestep)
                  
                 self.model_optimizer.zero_grad()
@@ -192,12 +193,19 @@ class WorldModel(object):
         self.var_networks = [DenseModel(modelstate_size, deter_size, self.var_disag_info).to(self.device) for i in range(10)]
         self.var_networks = [head.to(device) for head in self.var_networks]
 
+        from torchsummary import summary
+        
+        self.Obs2image = ConvDecoder(obs_size, 32, nn.ELU, self.args.img_shape).to(self.device)
+        # summary(self.Obs2image, (16, obs_size))
+
+
     def _optim_initialize(self):
         model_lr = self.lr['model']
         self.world_list = [self.ObsEncoder, self.RSSM, self.RewardDecoder, self.ObsDecoder, self.DiscountModel]
         self.model_optimizer = optim.Adam(get_parameters(self.world_list), model_lr)
         self.var_optimizer = optim.Adam(get_parameters(self.var_networks), model_lr)
-    
+        self.obs2img_optimizer = optim.Adam(get_parameters([self.Obs2image]), model_lr)
+
     def _print_summary(self):
         print('\n Obs encoder: \n', self.ObsEncoder)
         print('\n RSSM model: \n', self.RSSM)

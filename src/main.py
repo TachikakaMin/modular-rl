@@ -3,8 +3,9 @@ import numpy as np
 import torch
 import os
 import utils
-# import TD3
-import TD3_bak as TD3
+import cv2
+import TD3
+# import TD3_bak as TD3
 from copy import deepcopy as dp
 import json
 import time
@@ -19,9 +20,7 @@ from new_model.wm import WorldModel
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # device = torch.device("cpu")
 
-def train(args):
-
-    # Set up directories ===========================================================
+def make_paths(args):
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(BUFFER_DIR, exist_ok=True)
     exp_name = "EXP_%04d" % (args.expID)
@@ -33,6 +32,14 @@ def train(args):
     with open(os.path.join(exp_path, 'args.txt'), 'w+') as f:
         json.dump(args.__dict__, f, indent=2)
 
+    load_exp_name = "EXP_%04d" % (args.loadID)
+    load_exp_path = os.path.join(DATA_DIR, load_exp_name)
+    load_rb_path = os.path.join(BUFFER_DIR, load_exp_name)
+
+    return args, exp_path, rb_path, load_exp_path, load_rb_path, exp_name
+
+
+def make_envs(args):
     # Retrieve MuJoCo XML files for training ========================================
     envs_train_names = []
     args.graphs = dict()
@@ -40,7 +47,7 @@ def train(args):
     if not args.custom_xml:
         for morphology in args.morphologies:
             envs_train_names += [name[:-4] for name in os.listdir(XML_DIR) if '.xml' in name and morphology in name]
-        # envs_train_names = ["hopper_3"]
+
         for name in envs_train_names:
             args.graphs[name] = utils.getGraphStructure(os.path.join(XML_DIR, '{}.xml'.format(name)))
     # custom envs
@@ -57,61 +64,61 @@ def train(args):
                     args.graphs[name[:-4]] = utils.getGraphStructure(os.path.join(args.custom_xml, name))
     envs_train_names.sort()
     num_envs_train = len(envs_train_names)
+    args.num_envs_train = num_envs_train
     print("#" * 50 + '\ntraining envs: {}\n'.format(envs_train_names) + "#" * 50)
 
     # Set up training env and policy ================================================
     args.limb_obs_size, args.max_action, envs_train = utils.registerEnvs(envs_train_names, args)
     max_num_limbs = max([len(args.graphs[env_name]) for env_name in envs_train_names])
     args.max_num_limbs = max_num_limbs
-
+    
     
     # create vectorized training env
     obs_max_len = max([len(args.graphs[env_name]) for env_name in envs_train_names]) * args.limb_obs_size
     args.obs_max_len = obs_max_len
     envs_train = SubprocVecEnv(envs_train)  # vectorized env
-    # set random seeds
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
     # determine the maximum number of children in all the training envs
     if args.max_children is None:
         args.max_children = utils.findMaxChildren(envs_train_names, args.graphs)
+    
+    return args, envs_train, num_envs_train, envs_train_names, max_num_limbs
+
+
+def make_models(args):
+    # set random seeds
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
     # setup agent policy
     args.isExpl = True
     expl_policy = TD3.TD3(args)
     args.isExpl = False
     real_policy = TD3.TD3(args)
 
-    args.obs_encoder = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
-    args.obs_decoder = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
+    args.img_shape = (3, 64, 64)
     args.var_disag = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
-    args.done_head = {'layers':4, 'node_size':100, 'dist': None, 'activation':nn.ELU}
-    args.forward_reward_args = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
     args.seq_len = 5
     args.horizon = 5
     args.grad_clip = 100.0
     wm = WorldModel(encode_size = 128, args = args)
+    return args, expl_policy, real_policy, wm
 
-    load_exp_name = "EXP_%04d" % (args.loadID)
-    load_exp_path = os.path.join(DATA_DIR, load_exp_name)
-    load_rb_path = os.path.join(BUFFER_DIR, load_exp_name)
-    # Create new training instance or load previous checkpoint ========================
-    print("*** training from scratch ***")
-    # init training vars
-    total_timesteps = 0
-    episode_num = 0
-    num_samples = 0
-    # different replay buffer for each env; avoid using too much memory if there are too many envs
+
+def make_replay_buffer(args, envs_train_names):
     replay_buffer = dict()
-    if num_envs_train > args.rb_max // 1e6:
+    if args.num_envs_train > args.rb_max // 1e6:
         for name in envs_train_names:
             replay_buffer[name] = utils.ReplayBuffer(max_size=args.rb_max // num_envs_train)
     else:
         for name in envs_train_names:
             replay_buffer[name] = utils.ReplayBuffer()
-    
-    
-    total_train_timestep_list = [0 for i in range(num_envs_train)]
-    
+    return args, replay_buffer
+
+
+def load_models(args, replay_buffer, load_exp_path, load_rb_path, real_policy, expl_policy, wm):
+    total_train_timestep_list = [0 for i in range(args.num_envs_train)]
+    total_timesteps = 0
+    episode_num = 0
+    num_samples = 0
     if cp.has_checkpoint(load_exp_path, load_rb_path):
         print("*** loading checkpoint from {} ***".format(load_exp_path))
         if args.only_load_model:
@@ -120,9 +127,21 @@ def train(args):
         else:
             total_timesteps, total_train_timestep_list, episode_num, replay_buffer, num_samples, loaded_path = cp.load_checkpoint(load_exp_path, load_rb_path, real_policy, expl_policy, wm, args)
         print("*** checkpoint loaded from {} ***".format(loaded_path))
-    
-        
+    return args, total_timesteps, total_train_timestep_list, episode_num, replay_buffer, num_samples
 
+def train(args):
+
+    # Set up directories ===========================================================
+    args, exp_path, rb_path, load_exp_path, load_rb_path, exp_name = make_paths(args)
+
+    args, envs_train, num_envs_train, envs_train_names, max_num_limbs = make_envs(args)
+    
+    args, replay_buffer = make_replay_buffer(args, envs_train_names)
+
+    args, expl_policy, real_policy, wm = make_models(args)
+
+        
+    print("*** training from scratch ***")
     # Initialize training variables ================================================
     writer = SummaryWriter("%s/%s/" % (DATA_DIR, exp_name))
     s = time.time()
@@ -130,96 +149,53 @@ def train(args):
     timesteps_since_test = 0
     timesteps_since_saving_model_only = 0
     this_training_timesteps = 0
-    collect_done = True
+    collect_done = False
+    obs_list = envs_train.reset()
+    done_list = [False for i in range(num_envs_train)]
+    episode_reward_list = [0 for i in range(num_envs_train)]
     episode_timesteps_list = [0 for i in range(num_envs_train)]
-    done_list = [True for i in range(num_envs_train)]
+    episode_reward_list_buffer = [0 for i in range(num_envs_train)]
+    
+    (args, total_timesteps, total_train_timestep_list, 
+                episode_num, replay_buffer, num_samples) = load_models(args, replay_buffer, load_exp_path, load_rb_path, real_policy, expl_policy, wm)
+    
+
     # Start training ===========================================================
     while total_timesteps < args.max_timesteps:
         # train and log after one episode for each env
         if collect_done:
             # log updates and train policy
-            if this_training_timesteps != 0:
-                print("train world model")
-                log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
-                wm.train(log_var, episode_timesteps_list, args.batch_size, replay_buffer, envs_train_names=envs_train_names[:num_envs_train])
+            # print("train world model")
+            # log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
+            # wm.train(log_var, episode_timesteps_list, args.batch_size, replay_buffer, envs_train_names=envs_train_names[:num_envs_train])
 
-                print("train expl_policy")
-                # log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
-                log_var = {"writer": writer, "total_train_timestep_list": total_train_timestep_list}
-                expl_policy.train(wm, log_var, replay_buffer, episode_timesteps_list, args.batch_size,
-                            args.discount, args.tau, args.policy_noise, args.noise_clip,
-                            args.policy_freq, graphs=args.graphs, envs_train_names=envs_train_names[:num_envs_train])
-                
-                # print("train real_policy")
-                # log_var = {"writer": writer, "total_train_timestep_list": total_train_timestep_list}
-                # real_policy.train(wm, log_var, replay_buffer, episode_timesteps_list, args.batch_size,
-                #             args.discount, args.tau, args.policy_noise, args.noise_clip,
-                #             args.policy_freq, graphs=args.graphs, envs_train_names=envs_train_names[:num_envs_train])
-                
+            print("train expl_policy")
+            # log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
+            log_var = {"writer": writer, "total_train_timestep_list": total_train_timestep_list}
+            expl_policy.train(wm, log_var, replay_buffer, episode_timesteps_list, args.batch_size,
+                        args.discount, args.tau, args.policy_noise, args.noise_clip,
+                        args.policy_freq, graphs=args.graphs, envs_train_names=envs_train_names[:num_envs_train])
+            
+            # print("train real_policy")
+            # log_var = {"writer": writer, "total_train_timestep_list": total_train_timestep_list}
+            # real_policy.train(wm, log_var, replay_buffer, episode_timesteps_list, args.batch_size,
+            #             args.discount, args.tau, args.policy_noise, args.noise_clip,
+            #             args.policy_freq, graphs=args.graphs, envs_train_names=envs_train_names[:num_envs_train])
+            
 
-                # add to tensorboard display
-                for i in range(num_envs_train):
-                    writer.add_scalar('{}_expl_episode_reward'.format(envs_train_names[i]), episode_reward_list[i], total_timesteps)
-                    writer.add_scalar('{}_expl_episode_len'.format(envs_train_names[i]), episode_timesteps_list[i], total_timesteps)
-                # print to console
-                print("-" * 50 + "\nExpID: {}, FPS: {:.2f}, TotalT: {}, EpisodeNum: {}, SampleNum: {}, ReplayBSize: {}".format(
-                        args.expID, this_training_timesteps / (time.time() - s),
-                        total_timesteps, episode_num, num_samples,
-                        sum([len(replay_buffer[name].storage) for name in envs_train_names])))
-                for i in range(len(envs_train_names)):
-                    print("{} === EpisodeT: {}, Reward: {:.2f}".format(envs_train_names[i],
-                                                                       episode_timesteps_list[i],
-                                                                       episode_reward_list[i]))
-
-            # if timesteps_since_test >= args.test_real_freq:
-            #     print("start test real policy")
-            #     timesteps_since_test = 0
-                
-            #     collect_done = False
-            #     obs_list = envs_train.reset()
-            #     done_list = [False for i in range(num_envs_train)]
-                
-            #     episode_reward_list_buffer = [0 for i in range(num_envs_train)]
-            #     episode_reward_list = [0 for i in range(num_envs_train)]
-            #     episode_timesteps_list = [0 for i in range(num_envs_train)]
-
-            #     while not collect_done: 
-            #         action_list = []
-            #         for i in range(num_envs_train):
-            #             real_policy.change_morphology(args.graphs[envs_train_names[i]])
-            #             obs = np.array(obs_list[i][:args.limb_obs_size * len(args.graphs[envs_train_names[i]])])
-            #             policy_action = real_policy.select_action(obs)
-            #             if args.expl_noise != 0:
-            #                 policy_action = (policy_action + np.random.normal(0, args.expl_noise,
-            #                     size=policy_action.size)).clip(envs_train.action_space.low[0],
-            #                     envs_train.action_space.high[0])
-            #             policy_action = np.append(policy_action, np.array([0 for i in range(max_num_limbs - policy_action.size)]))
-            #             action_list.append(policy_action)
-
-            #         new_obs_list, reward_list, curr_done_list, _ = envs_train.step(action_list)
-            #         done_list = [done_list[i] or curr_done_list[i] for i in range(num_envs_train)]
-
-            #         for i in range(num_envs_train):
-            #             episode_reward_list_buffer[i] += reward_list[i]
-            #             if curr_done_list[i] and episode_reward_list[i] == 0:
-            #                 episode_reward_list[i] = episode_reward_list_buffer[i]
-            #                 episode_reward_list_buffer[i] = 0
-            #             if episode_timesteps_list[i] + 1 == args.max_episode_steps:
-            #                 done_list[i] = True
-            #             if not done_list[i]:
-            #                 episode_timesteps_list[i] += 1
-            #         obs_list = new_obs_list
-            #         collect_done = all(done_list)
-
-            #     for i in range(num_envs_train):
-            #         writer.add_scalar('{}_real_reward'.format(envs_train_names[i]), episode_reward_list[i], total_timesteps)
-            #         writer.add_scalar('{}_real_len'.format(envs_train_names[i]), episode_timesteps_list[i], total_timesteps)
-                
-            #     for i in range(len(envs_train_names)):
-            #         print("[Test] {} === EpisodeT: {}, Reward: {:.2f}".format(envs_train_names[i],
-            #                                                            episode_timesteps_list[i],
-            #                                                            episode_reward_list[i]))
- 
+            # add to tensorboard display
+            for i in range(num_envs_train):
+                writer.add_scalar('{}_expl_episode_reward'.format(envs_train_names[i]), episode_reward_list[i], total_timesteps)
+                writer.add_scalar('{}_expl_episode_len'.format(envs_train_names[i]), episode_timesteps_list[i], total_timesteps)
+            # print to console
+            print("-" * 50 + "\nExpID: {}, FPS: {:.2f}, TotalT: {}, EpisodeNum: {}, SampleNum: {}, ReplayBSize: {}".format(
+                    args.expID, this_training_timesteps / (time.time() - s),
+                    total_timesteps, episode_num, num_samples,
+                    sum([len(replay_buffer[name].storage) for name in envs_train_names])))
+            for i in range(len(envs_train_names)):
+                print("{} === EpisodeT: {}, Reward: {:.2f}".format(envs_train_names[i],
+                                                                    episode_timesteps_list[i],
+                                                                    episode_reward_list[i]))
 
             # save model and replay buffers
             if timesteps_since_saving >= args.save_freq:
@@ -267,7 +243,8 @@ def train(args):
 
         # perform action in the environment
         new_obs_list, reward_list, curr_done_list, _ = envs_train.step(action_list)
-
+        env_img_list = envs_train.get_images()
+        new_img_list = [cv2.resize(img, (64,64)) for img in env_img_list]
         # record if each env has ever been 'done'
         done_list = [done_list[i] or curr_done_list[i] for i in range(num_envs_train)]
 
@@ -288,8 +265,10 @@ def train(args):
             obs = np.array(obs_list[i][:args.limb_obs_size * num_limbs])
             new_obs = np.array(new_obs_list[i][:args.limb_obs_size * num_limbs])
             action = np.array(action_list[i][:num_limbs])
+            new_obs_img = new_img_list[i]
             
-            replay_buffer[envs_train_names[i]].add((obs, new_obs, action, reward_list[i], done_bool))
+           
+            replay_buffer[envs_train_names[i]].add((obs, new_obs, action, reward_list[i], done_bool, new_obs_img))
             num_samples += 1
             # do not increment episode_timesteps if the sub-env has been 'done'
             if not done_list[i]:

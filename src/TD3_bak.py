@@ -67,13 +67,33 @@ class TD3(object):
             env_name = log_var["env_name"]
             # sample replay buffer
 
-            x, y, u, r, d  = replay_buffer.sample(batch_size)
+            x, y, u, r, d, next_ori_imgs  = replay_buffer.sample(batch_size)
             state = torch.FloatTensor(x).to(device)
             next_state = torch.FloatTensor(y).to(device)
             action = torch.FloatTensor(u).to(device)
             real_reward = torch.FloatTensor(r).to(device)
             done = torch.FloatTensor(1 - d).to(device)
+            next_imgs = torch.FloatTensor(next_ori_imgs).to(device)
+            next_imgs = next_imgs / 255.0 - 0.5
+            next_imgs = torch.permute(next_imgs, (0, 3, 1, 2))
+
+            wm_imgs = wm.Obs2image(next_state)
+            loss = wm._obs_loss(wm_imgs, next_imgs)
+            writer.add_scalar('{}_wm_image_decoder_loss'.format(env_name), loss.item(), timestep)
+            if timestep % 200 == 0: 
+                img = wm_imgs.mode()[0]
+                img = img.detach().cpu().numpy()
+                img = (img + 0.5) * 255.0
+                img = img.clip(0, 255).astype(np.uint8)
+                std_img = next_ori_imgs[0]
+
+                writer.add_image('decoder_images', img, timestep)
+                writer.add_image('std_images', std_img, timestep, dataformats='HWC')
                 
+            wm.obs2img_optimizer.zero_grad()
+            loss.backward()
+            wm.obs2img_optimizer.step()
+
             new_bz = next_state.shape[0]
             
             # select action according to policy and add clipped noise

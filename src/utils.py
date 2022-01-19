@@ -115,6 +115,7 @@ def quat2expmap(q):
 class ReplayBuffer(object):
     def __init__(self, max_size=1e6, slicing_size=None):
         self.storage = []
+        self.img_storage = []
         self.max_size = max_size
         self.ptr = 0
         # maintains slicing info for [obs, new_obs, action, reward, done]
@@ -126,16 +127,19 @@ class ReplayBuffer(object):
     def add(self, data):
         if self.slicing_size is None:
             self.slicing_size = [data[0].size, data[1].size, data[2].size, 1, 1]
+        img = data[-1]
         data = np.concatenate([data[0], data[1], data[2], [data[3]], [data[4]]])
         if len(self.storage) == self.max_size:
             self.storage[int(self.ptr)] = data
+            self.img_storage[int(self.ptr)] = img
             self.ptr = (self.ptr + 1) % self.max_size
         else:
             self.storage.append(data)
+            self.img_storage.append(img)
 
     def sample(self, batch_size):
         ind = np.random.randint(0, len(self.storage), size=batch_size)
-        x, y, u, r, d, e, f = [], [], [], [], [], [], []
+        x, y, u, r, d, imgs= [], [], [], [], [], []
 
         for i in ind:
             data = self.storage[i]
@@ -160,6 +164,8 @@ class ReplayBuffer(object):
             ed = st + self.slicing_size[4]
             D = data[st:ed]
 
+
+            img = self.img_storage[i]
             # st = ed
             # ed = st + self.slicing_size[5]
             # E = data[st:ed]
@@ -173,18 +179,21 @@ class ReplayBuffer(object):
             u.append(np.array(U, copy=False))
             r.append(np.array(R, copy=False))
             d.append(np.array(D, copy=False))
+            imgs.append(np.array(img, copy=False))
             # e.append(np.array(E, copy=False))
             # f.append(np.array(F, copy=False))
 
         return (np.array(x), np.array(y), np.array(u),
-                    np.array(r).reshape(-1, 1), np.array(d).reshape(-1, 1))
+                    np.array(r).reshape(-1, 1), 
+                    np.array(d).reshape(-1, 1), 
+                    np.array(imgs))
 
     def sample_seq_len(self, batch_size, seq_len):
         ind = np.random.randint(0, len(self.storage)-seq_len, size=batch_size)
-        x, y, u, r, d= [], [], [], [], []
+        x, y, u, r, d, imgs= [], [], [], [], [], []
 
         for i in ind:
-            x1, y1, u1, r1, d1 = [], [], [], [], []
+            x1, y1, u1, r1, d1, img1 = [], [], [], [], [], []
             for j in range(i,i+seq_len):
                 data = self.storage[j]
                 st = 0
@@ -207,20 +216,24 @@ class ReplayBuffer(object):
                 ed = st + self.slicing_size[4]
                 D = data[st:ed]
 
+                img = self.img_storage[j]
+
                 x1.append(np.array(X, copy=False))
                 y1.append(np.array(Y, copy=False))
                 u1.append(np.array(U, copy=False))
                 r1.append(np.array(R, copy=False))
                 d1.append(np.array(D, copy=False))
+                img1.append(np.array(img, copy=False))
 
             x.append(np.array(x1, copy=False))
             y.append(np.array(y1, copy=False))
             u.append(np.array(u1, copy=False))
             r.append(np.array(r1, copy=False))
             d.append(np.array(d1, copy=False))
+            imgs.append(np.array(img1, copy=False))
 
         return (np.array(x), np.array(y), np.array(u),
-                    np.array(r), np.array(d))
+                    np.array(r), np.array(d), np.array(imgs))
 
 
 class MLPBase(nn.Module):

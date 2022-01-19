@@ -67,7 +67,7 @@ class TD3(object):
             env_name = log_var["env_name"]
             # sample replay buffer
 
-            x, y, u, r, d = replay_buffer.sample_seq_len(batch_size, self.args.horizon + 1)
+            x, y, u, r, d, imgs = replay_buffer.sample_seq_len(batch_size, self.args.horizon + 1)
             states = torch.FloatTensor(x).to(device)
             states = torch.permute(states, (1, 0, 2))
             modular_state_size = states.shape[2]
@@ -119,9 +119,9 @@ class TD3(object):
                     next_state = imag_modelstates[h+1].detach()
                     with FreezeParameters([wm.ObsDecoder]):
                         last_state = wm.ObsDecoder(last_state)   
-                        last_state = last_state.sample()[:, :modular_state_size]
+                        last_state = last_state.mean[:, :modular_state_size]
                         next_state = wm.ObsDecoder(next_state)   
-                        next_state = next_state.sample()[:, :modular_state_size]
+                        next_state = next_state.mean[:, :modular_state_size]
 
                     # if self.isExpl:
                     #     reward = disag_reward[h+1].detach()
