@@ -96,8 +96,8 @@ def make_models(args):
 
     args.img_shape = (3, 64, 64)
     args.var_disag = {'layers':3, 'node_size':100, 'dist': None, 'activation':nn.ELU}
-    args.seq_len = 5
-    args.horizon = 5
+    args.seq_len = 2
+    args.horizon = 2
     args.grad_clip = 100.0
     wm = WorldModel(encode_size = 128, args = args)
     return args, expl_policy, real_policy, wm
@@ -165,9 +165,9 @@ def train(args):
         # train and log after one episode for each env
         if collect_done:
             # log updates and train policy
-            # print("train world model")
-            # log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
-            # wm.train(log_var, episode_timesteps_list, args.batch_size, replay_buffer, envs_train_names=envs_train_names[:num_envs_train])
+            print("train world model")
+            log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
+            wm.train(log_var, episode_timesteps_list, args.batch_size, replay_buffer, envs_train_names=envs_train_names[:num_envs_train])
 
             print("train expl_policy")
             # log_var = {"writer": writer, "total_train_timestep_list": dp(total_train_timestep_list)}
@@ -243,8 +243,8 @@ def train(args):
 
         # perform action in the environment
         new_obs_list, reward_list, curr_done_list, _ = envs_train.step(action_list)
-        env_img_list = envs_train.get_images()
-        new_img_list = [cv2.resize(img, (64,64)) for img in env_img_list]
+        # env_img_list = envs_train.get_images()
+        # new_img_list = [cv2.resize(img, (64,64)) for img in env_img_list]
         # record if each env has ever been 'done'
         done_list = [done_list[i] or curr_done_list[i] for i in range(num_envs_train)]
 
@@ -265,7 +265,8 @@ def train(args):
             obs = np.array(obs_list[i][:args.limb_obs_size * num_limbs])
             new_obs = np.array(new_obs_list[i][:args.limb_obs_size * num_limbs])
             action = np.array(action_list[i][:num_limbs])
-            new_obs_img = new_img_list[i]
+            # new_obs_img = new_img_list[i]
+            new_obs_img = 0
             
            
             replay_buffer[envs_train_names[i]].add((obs, new_obs, action, reward_list[i], done_bool, new_obs_img))

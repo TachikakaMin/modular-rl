@@ -61,7 +61,7 @@ class WorldModel(object):
                 writer = log_var["writer"]
                 env_name = log_var["env_name"]
 
-                x, y, u, r, d = replay_buffer.sample_seq_len(batch_size, self.horizon + 1)
+                x, y, u, r, d, imgs = replay_buffer.sample_seq_len(batch_size, self.horizon + 1)
                 states = torch.FloatTensor(x).to(device)
                 states = torch.permute(states, (1, 0, 2))
                 obs = states[1:]
