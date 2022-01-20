@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 from .module import get_parameters, FreezeParameters
 from .algorithm import compute_return
-
+import torchvision
 
 from .dense import DenseModel
 from .pixel import ObsDecoder, ObsEncoder, ConvDecoder
@@ -61,7 +61,13 @@ class WorldModel(object):
                 writer = log_var["writer"]
                 env_name = log_var["env_name"]
 
-                x, y, u, r, d, imgs = replay_buffer.sample_seq_len(batch_size, self.horizon + 1)
+                x, y, u, r, d, next_ori_imgs = replay_buffer.sample_seq_len(batch_size, self.horizon + 1)
+                
+                next_ori_imgs = np.transpose(next_ori_imgs, (1, 0, 2, 3, 4))
+
+                next_states = torch.FloatTensor(y).to(device)
+                next_states = torch.permute(next_states, (1, 0, 2))
+
                 states = torch.FloatTensor(x).to(device)
                 states = torch.permute(states, (1, 0, 2))
                 obs = states[1:]
@@ -83,6 +89,38 @@ class WorldModel(object):
                 dones = torch.FloatTensor(1 - d).to(device)
                 dones = torch.permute(dones, (1, 0, 2)) # (horizon, bz, size)
                 nonterms = dones[:-1]
+
+
+
+
+                next_imgs = torch.FloatTensor(next_ori_imgs[0]).to(device)
+                next_imgs = next_imgs / 255.0 - 0.5
+                next_imgs = torch.permute(next_imgs, (0, 3, 1, 2))
+                next_state = next_states[0]
+                wm_imgs = self.Obs2image(next_state)
+                loss = self._obs_loss(wm_imgs, next_imgs)
+                writer.add_scalar('{}_wm_image_decoder_loss'.format(env_name), loss.item(), timestep)
+                
+                if timestep % 500 == 0: 
+                    img = wm_imgs.mode()[0]
+                    img = img.detach().cpu().numpy()
+                    img = (img + 0.5) * 255.0
+                    img = img.clip(0, 255).astype(np.uint8)
+                    std_img = next_ori_imgs[0][0]
+                    std_img = np.transpose(std_img, (2, 0, 1))
+                    show_img = np.stack([img, std_img])
+                    show_img = torch.tensor(show_img)
+                    show_img = torchvision.utils.make_grid(show_img, nrow=2, padding=2)
+                    writer.add_image('decoder-std_images', show_img, timestep)
+                
+                self.obs2img_optimizer.zero_grad()
+                loss.backward()
+                self.obs2img_optimizer.step()
+                
+
+
+
+
 
                 model_loss, kl_loss, obs_loss, reward_loss, disag_losses,  pcont_loss, prior_dist, post_dist, posterior = self.representation_loss(obs, acts, rewards, nonterms)
                 writer.add_scalar('{}_wm_model_loss'.format(env_name), model_loss.item(), timestep)
@@ -108,7 +146,7 @@ class WorldModel(object):
 
 
     def get_disag_reward(self, action_state_embeds):
-        disag_dist = [head(action_state_embeds).sample() for head in self.var_networks]
+        disag_dist = [head(action_state_embeds).mean for head in self.var_networks]
         disag = torch.stack(disag_dist, dim=0)
         disag = disag.std(0).mean(-1)
         return disag

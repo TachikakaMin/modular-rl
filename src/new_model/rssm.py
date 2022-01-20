@@ -75,7 +75,7 @@ class RSSM(nn.Module, RSSMUtils):
             input_state = (self.get_model_state(rssm_state)).detach()
             with FreezeParameters([ObsDecoder]):
                 input_state = ObsDecoder(input_state)   
-            input_state = input_state.sample()[:, :modular_state_size]
+            input_state = input_state.mean[:, :modular_state_size]
             action = actor(input_state, tmp_bs=input_state.shape[0])
             tmp = torch.zeros(action.shape[0], self.action_size).to(device)
             tmp[:, :action.shape[1]] = action

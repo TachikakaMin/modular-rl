@@ -243,8 +243,8 @@ def train(args):
 
         # perform action in the environment
         new_obs_list, reward_list, curr_done_list, _ = envs_train.step(action_list)
-        # env_img_list = envs_train.get_images()
-        # new_img_list = [cv2.resize(img, (64,64)) for img in env_img_list]
+        env_img_list = envs_train.get_images()
+        new_img_list = [cv2.resize(img, (64,64)) for img in env_img_list]
         # record if each env has ever been 'done'
         done_list = [done_list[i] or curr_done_list[i] for i in range(num_envs_train)]
 
@@ -265,8 +265,8 @@ def train(args):
             obs = np.array(obs_list[i][:args.limb_obs_size * num_limbs])
             new_obs = np.array(new_obs_list[i][:args.limb_obs_size * num_limbs])
             action = np.array(action_list[i][:num_limbs])
-            # new_obs_img = new_img_list[i]
-            new_obs_img = 0
+            new_obs_img = new_img_list[i]
+            # new_obs_img = 0
             
            
             replay_buffer[envs_train_names[i]].add((obs, new_obs, action, reward_list[i], done_bool, new_obs_img))
