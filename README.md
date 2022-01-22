@@ -1,3 +1,8 @@
+Training: 
+
+CUDA_VISIBLE_DEVICES=2 python src/main.py --expID 0008 --loadID 0008 --td --bu --morphologies cheetah_2_front --policy_noise 0.2 --expl_noise 0.1 --start_timesteps 10000 --lr 1e-4
+
+
 ## One Policy to Control Them All:<br/>Shared Modular Policies for Agent-Agnostic Control ##
 ### ICML 2020
 #### [[Project Page]](https://huangwl18.github.io/modular-rl/) [[Paper]](https://www.cs.cmu.edu/~dpathak/papers/modular-rl.pdf) [[Demo Video]](https://youtu.be/9YiZZ_8guq8) [[Long Oral Talk]](https://youtu.be/gEeQ0nzalzo)
